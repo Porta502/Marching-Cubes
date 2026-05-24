@@ -105,6 +105,7 @@ public class TerrainChunk : MonoBehaviour
         var verts = new List<Vector3>();
         var tris = new List<int>();
         var colors = new List<Color>();
+        Vector3[] normals = null;   // ← ADD THIS
 
         int step = currentLOD;
         for (int x = 0; x < chunkWidth; x += step)
@@ -112,14 +113,16 @@ public class TerrainChunk : MonoBehaviour
                 for (int z = 0; z < chunkWidth; z += step)
                     MarchCube(new Vector3Int(x, y, z), verts, tris, colors, step);
 
-        // null normals → ApplyMesh falls back to RecalculateNormals
-        ApplyMesh(verts, tris, colors, null, updateCollider);
+        if (verts.Count > 0)
+            normals = ComputeNormals(verts.ToArray(), tris.ToArray());
+
+        ApplyMesh(verts, tris, colors, normals, updateCollider);
     }
 
-    public async Task BuildMeshAsync(bool updateCollider = true)
+    public async Task BuildMeshAsync(bool updateCollider = true, float[,,] treeSnap = null)
     {
         float[,,] densitySnap = (float[,,])densityMap.Clone();
-        float[,,] treeDensitySnap = (float[,,])treeDensityMap.Clone();
+        float[,,] treeDensitySnap = treeSnap ?? (float[,,])treeDensityMap.Clone();
         float iso = isoLevel;
         int s = voxelScale;
         int step = currentLOD;
@@ -128,6 +131,10 @@ public class TerrainChunk : MonoBehaviour
         var tris = new List<int>();
         var colors = new List<Color>();
         Vector3[] normals = null;
+
+        float preMax = 0f;
+        foreach (var v in treeDensitySnap) if (v > preMax) preMax = v;
+        Debug.Log($"[BuildMesh] treeDensitySnap max={preMax} for chunk at frame start");
 
         await Task.Run(() =>
         {
@@ -159,6 +166,8 @@ public class TerrainChunk : MonoBehaviour
             finalMesh.vertices = verts.ToArray();
             finalMesh.triangles = tris.ToArray();
             finalMesh.colors = colors.ToArray();
+
+            Debug.Log($"[ApplyMesh] mesh.colors.Length={finalMesh.colors.Length} renderer.material={GetComponent<MeshRenderer>().material.shader.name}");
             if (normals != null && normals.Length == verts.Count)
                 finalMesh.normals = normals;
             else
@@ -166,7 +175,6 @@ public class TerrainChunk : MonoBehaviour
         }
 
         GetComponent<MeshFilter>().mesh = finalMesh;
-        GetComponent<MeshRenderer>().material = terrainMaterial;
 
         if (updateCollider)
         {
@@ -217,6 +225,7 @@ public class TerrainChunk : MonoBehaviour
         tMax = Mathf.Max(tMax, treeDensityMap[x + step, y + step, z]);
         tMax = Mathf.Max(tMax, treeDensityMap[x + step, y + step, z + step]);
         tMax = Mathf.Max(tMax, treeDensityMap[x, y + step, z + step]);
+
 
         Color vertColor = tMax >= 1.5f ? new Color(0, 1, 0)
                         : tMax >= 0.5f ? new Color(1, 0, 0)

@@ -2,21 +2,11 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Unity.Collections;
-using Unity.Jobs;
-using Unity.Mathematics;
 using UnityEngine;
-using UnityEngine.Rendering;
 
 public class TerrainGenerator : MonoBehaviour
 {
-    NativeArray<int> _triTable;
-    NativeArray<int> _edgeA;
-    NativeArray<int> _edgeB;
-    [SerializeField] ComputeShader _marchShader; 
-    ComputeBuffer _densityBuffer;
-    ComputeBuffer _vertexBuffer;
-    ComputeBuffer _triangleBuffer;
-    ComputeBuffer _counterBuffer;
+ 
     public GameObject terrainChunk;
     public Transform player;
     public Material terrainMaterial;
@@ -40,21 +30,6 @@ public class TerrainGenerator : MonoBehaviour
     NativeArray<float> _sharedTreeDensity;
     void Start()
     {
-        int cw = TerrainChunk.chunkWidth;
-        int ch = TerrainChunk.chunkHeight;
-        int size = (cw + 1) * (ch + 1) * (cw + 1);
-        _sharedDensity = new NativeArray<float>(size, Allocator.Persistent);
-        _sharedTreeDensity = new NativeArray<float>(size, Allocator.Persistent);
-
-        int[,] tri2D = MarchingCubesTables.triangulation;
-        _triTable = new NativeArray<int>(256 * 16, Allocator.Persistent);
-        for (int r = 0; r < 256; r++)
-            for (int c = 0; c < 16; c++)
-                _triTable[r * 16 + c] = tri2D[r, c];
-
-        _edgeA = new NativeArray<int>(MarchingCubesTables.cornerIndexAFromEdge, Allocator.Persistent);
-        _edgeB = new NativeArray<int>(MarchingCubesTables.cornerIndexBFromEdge, Allocator.Persistent);
-
         int curChunkPosX = Mathf.FloorToInt(player.position.x / ChunkWorldSize) * ChunkWorldSize;
         int curChunkPosZ = Mathf.FloorToInt(player.position.z / ChunkWorldSize) * ChunkWorldSize;
 
@@ -62,6 +37,7 @@ public class TerrainGenerator : MonoBehaviour
             for (int j = curChunkPosZ - ChunkWorldSize * chunkDist; j <= curChunkPosZ + ChunkWorldSize * chunkDist; j += ChunkWorldSize)
                 BuildChunkImmediate(i, j);
 
+        treeGenerator.ClearStampPass();
         foreach (var kvp in chunks)
         {
             System.Array.Clear(kvp.Value.treeDensityMap, 0, kvp.Value.treeDensityMap.Length);
@@ -76,10 +52,7 @@ public class TerrainGenerator : MonoBehaviour
             chunks.TryGetValue(new ChunkPos(cp.x + ChunkWorldSize, cp.z + ChunkWorldSize), out TerrainChunk nxz);
             kvp.Value.SyncBorderDensity(nx, nz, nxz);
             kvp.Value.currentLOD = GetLOD(cp);
-
-#pragma warning disable CS4014
-            DispatchMarchingCubes(kvp.Value, IsNearPlayer(cp, colliderDist));
-#pragma warning restore CS4014
+            kvp.Value.BuildMesh(IsNearPlayer(cp, colliderDist)); 
 
             WaterChunk wat = kvp.Value.GetComponentInChildren<WaterChunk>();
             if (wat != null) { wat.SetLocs(kvp.Value.densityMap); wat.BuildMesh(); }
@@ -87,7 +60,6 @@ public class TerrainGenerator : MonoBehaviour
 
         SpawnPlayerOnSurface();
     }
-
     // ─────────────────────────────────────────────────────────────
     float lodTimer = 0f;
     int lodUpdateIndex = 0;
@@ -136,9 +108,12 @@ public class TerrainGenerator : MonoBehaviour
         if (newLOD == chunk.currentLOD) return;
         chunk.currentLOD = newLOD;
         bool needCollider = IsNearPlayer(cp, colliderDist);
-        await DispatchMarchingCubes(chunk, needCollider);
-    }
 
+        treeGenerator?.StampTrees(chunk, chunk.densityMap);
+        float[,,] treeSnap = (float[,,])chunk.treeDensityMap.Clone();
+
+        await chunk.BuildMeshAsync(needCollider, treeSnap);  
+    }
     // ─────────────────────────────────────────────────────────────
     void SpawnPlayerOnSurface()
     {
@@ -211,7 +186,7 @@ public class TerrainGenerator : MonoBehaviour
             building.Remove(cp);
             return;
         }
-
+        treeGenerator?.ClearStampPass();
         int s = ChunkWorldSize;
         await Task.WhenAll(
             SyncAndBuildAsync(xPos, zPos),
@@ -244,26 +219,26 @@ public class TerrainGenerator : MonoBehaviour
         }
 
         chunk.SyncBorderDensity(nx, nz, nxz);
-        treeGenerator?.StampTrees(chunk, chunk.densityMap);
 
+        treeGenerator?.StampTrees(chunk, chunk.densityMap);
+        float[,,] treeSnap = (float[,,])chunk.treeDensityMap.Clone();
+
+        // TEMP:
+        float snapMax = 0f;
+        foreach (var v in treeSnap) if (v > snapMax) snapMax = v;
+        Debug.Log($"[Sync] snapMax={snapMax} for chunk {chunk.transform.position}");
 
         ChunkPos cp = new ChunkPos(xPos, zPos);
         chunk.currentLOD = GetLOD(cp);
         bool needCollider = IsNearPlayer(cp, colliderDist);
 
-        // ── ONLY CHANGE: skip collider update if player is standing on this chunk ──
         bool playerOnThisChunk = IsNearPlayer(cp, 0);
-        await DispatchMarchingCubes(chunk, needCollider, skipColliderIfPlayer: playerOnThisChunk);
-        // ─────────────────────────────────────────────────────────────────────────────
+        await chunk.BuildMeshAsync(needCollider, treeSnap);
 
         WaterChunk wat = chunk.GetComponentInChildren<WaterChunk>();
         if (wat != null) { wat.SetLocs(chunk.densityMap); wat.BuildMesh(); }
     }
-    async Task DispatchMarchingCubes(TerrainChunk chunk, bool needsCollider, bool skipColliderIfPlayer = false)
-    {
-        if (chunk == null || !chunk.gameObject.activeSelf) return;
-        await chunk.BuildMeshAsync(needsCollider);
-    }
+
     ChunkPos curChunk = new ChunkPos(-1, -1);
     void LoadChunks()
     {
@@ -300,7 +275,7 @@ public class TerrainGenerator : MonoBehaviour
             chunks[cp].gameObject.SetActive(false);
             pooledChunks.Add(chunks[cp]);
             chunks.Remove(cp);
-            building.Remove(cp); 
+            building.Remove(cp);
         }
 
         Plane[] frustumPlanes = GeometryUtility.CalculateFrustumPlanes(Camera.main);
@@ -327,9 +302,7 @@ public class TerrainGenerator : MonoBehaviour
         coroutineRunning = true;
         while (toGenerate.Count > 0)
         {
-            float frameStart = Time.realtimeSinceStartup;
-
-            while (toGenerate.Count > 0 && (Time.realtimeSinceStartup - frameStart) < 0.004f)
+            if (building.Count == 0)
             {
                 int batchX = toGenerate[0].x;
                 int batchZ = toGenerate[0].z;
@@ -344,24 +317,6 @@ public class TerrainGenerator : MonoBehaviour
         }
         coroutineRunning = false;
     }
-    void OnDestroy()
-    {
-        if (_sharedDensity.IsCreated) _sharedDensity.Dispose();
-        if (_sharedTreeDensity.IsCreated) _sharedTreeDensity.Dispose();
 
-        if (_triTable.IsCreated) _triTable.Dispose();
-        if (_edgeA.IsCreated) _edgeA.Dispose();
-        if (_edgeB.IsCreated) _edgeB.Dispose();
 
-        _densityBuffer?.Release();
-        _vertexBuffer?.Release();
-        _triangleBuffer?.Release();
-        _counterBuffer?.Release();
-    }
-}
-
-public struct ChunkPos
-{
-    public int x, z;
-    public ChunkPos(int x, int z) { this.x = x; this.z = z; }
 }
