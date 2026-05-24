@@ -118,8 +118,8 @@ public class TerrainChunk : MonoBehaviour
 
     public async Task BuildMeshAsync(bool updateCollider = true)
     {
-        float[,,] densitySnap = densityMap;
-        float[,,] treeDensitySnap = treeDensityMap;
+        float[,,] densitySnap = (float[,,])densityMap.Clone();
+        float[,,] treeDensitySnap = (float[,,])treeDensityMap.Clone();
         float iso = isoLevel;
         int s = voxelScale;
         int step = currentLOD;

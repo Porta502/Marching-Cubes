@@ -212,8 +212,6 @@ public class TerrainGenerator : MonoBehaviour
             return;
         }
 
-        treeGenerator?.StampTrees(chunk, chunk.densityMap);
-
         int s = ChunkWorldSize;
         await Task.WhenAll(
             SyncAndBuildAsync(xPos, zPos),
@@ -246,6 +244,8 @@ public class TerrainGenerator : MonoBehaviour
         }
 
         chunk.SyncBorderDensity(nx, nz, nxz);
+        treeGenerator?.StampTrees(chunk, chunk.densityMap);
+
 
         ChunkPos cp = new ChunkPos(xPos, zPos);
         chunk.currentLOD = GetLOD(cp);
@@ -262,93 +262,7 @@ public class TerrainGenerator : MonoBehaviour
     async Task DispatchMarchingCubes(TerrainChunk chunk, bool needsCollider, bool skipColliderIfPlayer = false)
     {
         if (chunk == null || !chunk.gameObject.activeSelf) return;
-
-        int cw = TerrainChunk.chunkWidth;
-        int ch = TerrainChunk.chunkHeight;
-        int size = (cw + 1) * (ch + 1) * (cw + 1);
-        int maxVerts = cw * ch * cw * 5 * 3;
-
-        float[] densityFlat = new float[size];
-        for (int x = 0; x <= cw; x++)
-            for (int y = 0; y <= ch; y++)
-                for (int z = 0; z <= cw; z++)
-                    densityFlat[x * (ch + 1) * (cw + 1) + y * (cw + 1) + z] = chunk.densityMap[x, y, z];
-
-        ComputeBuffer densityBuf = null;
-        ComputeBuffer vertBuf = null;
-        ComputeBuffer counterBuf = null;
-        Vector3[] verts = null;
-        int[] tris = null;
-
-        try
-        {
-            densityBuf = new ComputeBuffer(size, sizeof(float));
-            vertBuf = new ComputeBuffer(maxVerts, 3 * sizeof(float), ComputeBufferType.Append);
-            counterBuf = new ComputeBuffer(1, sizeof(int));   // plain, NOT IndirectArguments
-
-            densityBuf.SetData(densityFlat);
-            vertBuf.SetCounterValue(0);
-            counterBuf.SetData(new int[] { 0 });                      // reset to 0
-
-            int kernel = _marchShader.FindKernel("March");
-            _marchShader.SetBuffer(kernel, "_Densities", densityBuf);
-            _marchShader.SetBuffer(kernel, "_Vertices", vertBuf);
-            _marchShader.SetBuffer(kernel, "_VertexCounter", counterBuf);
-            _marchShader.SetInt("_ChunkWidth", cw);
-            _marchShader.SetInt("_ChunkHeight", ch);
-            _marchShader.SetFloat("_IsoLevel", chunk.isoLevel);
-            _marchShader.SetInt("_Step", chunk.currentLOD);
-            _marchShader.SetInt("_Scale", TerrainChunk.voxelScale);
-
-            int groups = Mathf.CeilToInt(cw / 8f);
-            _marchShader.Dispatch(kernel, groups, groups, 1);
-
-            // Read vertex count — just 4 bytes, negligible cost
-            int[] countArr = new int[1];
-            counterBuf.GetData(countArr);
-            int vertCount = countArr[0];
-            if (vertCount <= 0) return;
-
-            // Async readback — only the verts we actually wrote
-            bool done = false;
-            AsyncGPUReadback.Request(vertBuf, vertCount * 3 * sizeof(float), 0, req =>
-            {
-                if (!req.hasError) verts = req.GetData<Vector3>().ToArray();
-                done = true;
-            });
-            while (!done) await Task.Yield();
-
-            if (verts == null || verts.Length == 0) return;
-
-            // Flat non-indexed: just sequential indices
-            tris = new int[verts.Length];
-            for (int i = 0; i < tris.Length; i++) tris[i] = i;
-        }
-        finally
-        {
-            densityBuf?.Release();
-            vertBuf?.Release();
-            counterBuf?.Release();
-        }
-
-        if (chunk == null || !chunk.gameObject.activeSelf) return;
-
-        Mesh finalMesh = new Mesh { indexFormat = IndexFormat.UInt32 };
-        finalMesh.vertices = verts;
-        finalMesh.triangles = tris;
-        finalMesh.RecalculateNormals();
-
-        if (needsCollider && !skipColliderIfPlayer)
-        {
-            int meshID = finalMesh.GetInstanceID();
-            await Task.Run(() => Physics.BakeMesh(meshID, false));
-        }
-
-        if (chunk == null || !chunk.gameObject.activeSelf) return;
-        chunk.meshFilter.mesh = finalMesh;
-        if (needsCollider && chunk.meshCollider != null)
-            chunk.meshCollider.sharedMesh = skipColliderIfPlayer
-                ? chunk.meshCollider.sharedMesh : finalMesh;
+        await chunk.BuildMeshAsync(needsCollider);
     }
     ChunkPos curChunk = new ChunkPos(-1, -1);
     void LoadChunks()
