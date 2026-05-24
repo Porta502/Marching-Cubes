@@ -2,7 +2,6 @@
 
 StructuredBuffer<float> _Densities;
 RWStructuredBuffer<float3> _Vertices;
-RWStructuredBuffer<int> _Triangles;
 RWStructuredBuffer<int> _VertexCounter;
 
 int _ChunkWidth;
@@ -335,8 +334,5 @@ void March(uint3 id : SV_DispatchThreadID)
         _Vertices[base] = v0;
         _Vertices[base + 1] = v1;
         _Vertices[base + 2] = v2;
-        _Triangles[base] = base;
-        _Triangles[base + 1] = base + 1;
-        _Triangles[base + 2] = base + 2;
     }
 }
