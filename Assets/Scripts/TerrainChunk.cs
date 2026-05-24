@@ -122,6 +122,7 @@ public class TerrainChunk : MonoBehaviour
     public async Task BuildMeshAsync(bool updateCollider = true, float[,,] treeSnap = null)
     {
         float[,,] densitySnap = (float[,,])densityMap.Clone();
+        await BuildMeshAsync(updateCollider, treeSnap);
         float[,,] treeDensitySnap = treeSnap ?? (float[,,])treeDensityMap.Clone();
         float iso = isoLevel;
         int s = voxelScale;
@@ -134,7 +135,6 @@ public class TerrainChunk : MonoBehaviour
 
         float preMax = 0f;
         foreach (var v in treeDensitySnap) if (v > preMax) preMax = v;
-        Debug.Log($"[BuildMesh] treeDensitySnap max={preMax} for chunk at frame start");
 
         await Task.Run(() =>
         {
@@ -149,6 +149,14 @@ public class TerrainChunk : MonoBehaviour
         });
 
         if (this == null || gameObject == null || !gameObject.activeSelf) return;
+        int redCount = 0, greenCount = 0, blueCount = 0;
+        foreach (var c in colors)
+        {
+            if (c.r > 0.5f) redCount++;
+            else if (c.g > 0.5f) greenCount++;
+            else blueCount++;
+        }
+        Debug.Log($"COLORS r={redCount} g={greenCount} b={blueCount}");
         ApplyMesh(verts, tris, colors, normals, updateCollider);
     }
 
@@ -167,7 +175,6 @@ public class TerrainChunk : MonoBehaviour
             finalMesh.triangles = tris.ToArray();
             finalMesh.colors = colors.ToArray();
 
-            Debug.Log($"[ApplyMesh] mesh.colors.Length={finalMesh.colors.Length} renderer.material={GetComponent<MeshRenderer>().material.shader.name}");
             if (normals != null && normals.Length == verts.Count)
                 finalMesh.normals = normals;
             else

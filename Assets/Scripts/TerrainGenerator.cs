@@ -106,13 +106,11 @@ public class TerrainGenerator : MonoBehaviour
         if (chunk == null || !chunk.gameObject.activeSelf) return;
         int newLOD = GetLOD(cp);
         if (newLOD == chunk.currentLOD) return;
+
         chunk.currentLOD = newLOD;
         bool needCollider = IsNearPlayer(cp, colliderDist);
 
-        treeGenerator?.StampTrees(chunk, chunk.densityMap);
-        float[,,] treeSnap = (float[,,])chunk.treeDensityMap.Clone();
-
-        await chunk.BuildMeshAsync(needCollider, treeSnap);  
+        await chunk.BuildMeshAsync(needCollider);
     }
     // ─────────────────────────────────────────────────────────────
     void SpawnPlayerOnSurface()
@@ -226,7 +224,6 @@ public class TerrainGenerator : MonoBehaviour
         // TEMP:
         float snapMax = 0f;
         foreach (var v in treeSnap) if (v > snapMax) snapMax = v;
-        Debug.Log($"[Sync] snapMax={snapMax} for chunk {chunk.transform.position}");
 
         ChunkPos cp = new ChunkPos(xPos, zPos);
         chunk.currentLOD = GetLOD(cp);
