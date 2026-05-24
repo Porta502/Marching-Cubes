@@ -32,14 +32,37 @@ public class TreeGenerator : MonoBehaviour
 
     private FastNoise noise = new FastNoise();
     private List<Vector2> allTreeWorldPositions = new List<Vector2>();
+    private HashSet<Vector2Int> stampedThisPass = new HashSet<Vector2Int>();
 
-    // ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
     public void StampTrees(TerrainChunk chunk, float[,,] densityMap)
     {
+        if (chunk.treeDensityMap == null) return;
+
+        Vector2Int key = new Vector2Int(
+            (int)chunk.transform.position.x,
+            (int)chunk.transform.position.z);
+        lock (stampedThisPass)
+        {
+            if (!stampedThisPass.Add(key)) return;
+        }
+
         System.Array.Clear(chunk.treeDensityMap, 0, chunk.treeDensityMap.Length);
 
         int width = TerrainChunk.chunkWidth;
         int height = TerrainChunk.chunkHeight;
+        int candidateCount = 0;
+        int noiseFail = 0;
+        int rngFail = 0;
+        int surfaceFail = 0;
+        int distanceFail = 0;
+
+        allTreeWorldPositions.RemoveAll(p =>
+        {
+            float cx = chunk.transform.position.x;
+            float cz = chunk.transform.position.z;
+            return p.x >= cx && p.x < cx + width &&
+                   p.y >= cz && p.y < cz + width;
+        });
 
         for (int x = 3; x < width - 3; x++)
             for (int z = 3; z < width - 3; z++)
@@ -49,26 +72,26 @@ public class TreeGenerator : MonoBehaviour
 
                 float rawNoise = noise.GetSimplex(worldX * noiseScale, worldZ * noiseScale);
                 float normalizedNoise = (rawNoise + 1f) / 2f;
-                if (normalizedNoise < 0.35f) continue;
+                if (normalizedNoise < 0.35f) { noiseFail++; continue; }
 
                 int hash = (int)worldX * 73856093 ^ (int)worldZ * 19349663;
                 System.Random rng = new System.Random(hash);
-                if (rng.NextDouble() > spawnChance * normalizedNoise) continue;
+                if (rng.NextDouble() > spawnChance * normalizedNoise) { rngFail++; continue; }
 
                 int surfaceY = -1;
                 for (int y = height - 1; y >= 1; y--)
-                {
                     if (densityMap[x, y, z] > 0f && densityMap[x, y - 1, z] > 0f)
                     { surfaceY = y; break; }
-                }
-                if (surfaceY < minSurfaceY || surfaceY > maxSurfaceY) continue;
+                if (surfaceY < minSurfaceY || surfaceY > maxSurfaceY) { surfaceFail++; continue; }
+
+                candidateCount++;
 
                 Vector2 candidate = new Vector2(worldX, worldZ);
                 bool tooClose = false;
                 foreach (Vector2 existing in allTreeWorldPositions)
                     if (Vector2.Distance(candidate, existing) < minTreeDistance)
                     { tooClose = true; break; }
-                if (tooClose) continue;
+                if (tooClose) { distanceFail++; continue; }
 
                 allTreeWorldPositions.Add(candidate);
 
@@ -92,9 +115,8 @@ public class TreeGenerator : MonoBehaviour
                     rng
                 );
             }
+        Debug.Log($"[StampTrees] chunk {chunk.transform.position} | noiseFail={noiseFail} rngFail={rngFail} surfaceFail={surfaceFail} candidates={candidateCount}");
     }
-
-    // ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
     void GrowBranchWithLeaves(float[,,] density, float[,,] treeMap,
                                int chunkX, int chunkZ,
                                int width, int height,
@@ -195,7 +217,6 @@ public class TreeGenerator : MonoBehaviour
                 }
     }
 
-    // ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
     void StampEllipsoid(float[,,] density, float[,,] treeMap,
                         int cx, int cy, int cz,
                         float rX, float rY, float rZ,
@@ -248,4 +269,5 @@ public class TreeGenerator : MonoBehaviour
         return !float.IsNaN(v.x) && !float.IsNaN(v.y) && !float.IsNaN(v.z)
             && !float.IsInfinity(v.x) && !float.IsInfinity(v.y) && !float.IsInfinity(v.z);
     }
+    public void ClearStampPass() => stampedThisPass.Clear();
 }
