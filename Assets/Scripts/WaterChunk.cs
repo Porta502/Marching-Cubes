@@ -3,7 +3,7 @@ using UnityEngine;
 
 public class WaterChunk : MonoBehaviour
 {
-    public const int waterHeight = 26;
+    public const int waterHeight = 20;
 
     void Start()
     {
