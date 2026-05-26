@@ -6,7 +6,7 @@ using UnityEngine;
 
 public class TerrainGenerator : MonoBehaviour
 {
- 
+
     public GameObject terrainChunk;
     public Transform player;
     public Material terrainMaterial;
@@ -52,7 +52,7 @@ public class TerrainGenerator : MonoBehaviour
             chunks.TryGetValue(new ChunkPos(cp.x + ChunkWorldSize, cp.z + ChunkWorldSize), out TerrainChunk nxz);
             kvp.Value.SyncBorderDensity(nx, nz, nxz);
             kvp.Value.currentLOD = GetLOD(cp);
-            kvp.Value.BuildMesh(IsNearPlayer(cp, colliderDist)); 
+            kvp.Value.BuildMesh(IsNearPlayer(cp, colliderDist));
 
             WaterChunk wat = kvp.Value.GetComponentInChildren<WaterChunk>();
             if (wat != null) { wat.SetLocs(kvp.Value.densityMap); wat.BuildMesh(); }
@@ -132,7 +132,7 @@ public class TerrainGenerator : MonoBehaviour
         {
             chunk = pooledChunks[0];
             pooledChunks.RemoveAt(0);
-            chunk.densityReady = false;
+            chunk.ResetForReuse();
             chunk.gameObject.SetActive(true);
             chunk.transform.position = new Vector3(xPos, 0, zPos);
         }
@@ -142,7 +142,7 @@ public class TerrainGenerator : MonoBehaviour
             chunk = go.GetComponent<TerrainChunk>();
         }
         chunk.GetComponent<MeshRenderer>().material = terrainMaterial;
-        chunk.InitCollider(); // ← clear stale collider from pooled chunk
+        chunk.InitCollider();
         chunk.GenerateDensity(chunk.transform.position);
         chunks.Add(new ChunkPos(xPos, zPos), chunk);
     }
@@ -159,7 +159,7 @@ public class TerrainGenerator : MonoBehaviour
         {
             chunk = pooledChunks[0];
             pooledChunks.RemoveAt(0);
-            chunk.densityReady = false;
+            chunk.ResetForReuse();
             chunk.gameObject.SetActive(true);
             chunk.transform.position = new Vector3(xPos, 0, zPos);
         }
@@ -184,7 +184,6 @@ public class TerrainGenerator : MonoBehaviour
             building.Remove(cp);
             return;
         }
-        treeGenerator?.ClearStampPass();
         int s = ChunkWorldSize;
         await Task.WhenAll(
             SyncAndBuildAsync(xPos, zPos),
@@ -216,21 +215,17 @@ public class TerrainGenerator : MonoBehaviour
             waited++;
         }
 
-        chunk.SyncBorderDensity(nx, nz, nxz);
-
+        // Always clear global position state so newly-stamped trees don't get crowded out by prior ones.
+        treeGenerator?.ClearStampPass();
+        // IMPORTANT: Call StampTrees BEFORE SyncBorderDensity, to exactly match initial worldgen path.
         treeGenerator?.StampTrees(chunk, chunk.densityMap);
-        float[,,] treeSnap = (float[,,])chunk.treeDensityMap.Clone();
-
-        // TEMP:
-        float snapMax = 0f;
-        foreach (var v in treeSnap) if (v > snapMax) snapMax = v;
+        chunk.SyncBorderDensity(nx, nz, nxz);
 
         ChunkPos cp = new ChunkPos(xPos, zPos);
         chunk.currentLOD = GetLOD(cp);
         bool needCollider = IsNearPlayer(cp, colliderDist);
 
-        bool playerOnThisChunk = IsNearPlayer(cp, 0);
-        await chunk.BuildMeshAsync(needCollider, treeSnap);
+        await chunk.BuildMeshAsync(needCollider);
 
         WaterChunk wat = chunk.GetComponentInChildren<WaterChunk>();
         if (wat != null) { wat.SetLocs(chunk.densityMap); wat.BuildMesh(); }
@@ -269,6 +264,7 @@ public class TerrainGenerator : MonoBehaviour
 
         foreach (ChunkPos cp in toDestroy)
         {
+            treeGenerator?.EvictChunkPositions(cp.x, cp.z);
             chunks[cp].gameObject.SetActive(false);
             pooledChunks.Add(chunks[cp]);
             chunks.Remove(cp);

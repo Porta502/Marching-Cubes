@@ -228,7 +228,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 547c052d182ba2245a6d8707a82ebe70, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _marchShader: {fileID: 7200000, guid: fa129543d5d2d9d4687bab5b780e357e, type: 3}
   terrainChunk: {fileID: 6546764858940181633, guid: 5ce7861e514decf459c0596a9a9e7c6c,
     type: 3}
   player: {fileID: 1100592808}

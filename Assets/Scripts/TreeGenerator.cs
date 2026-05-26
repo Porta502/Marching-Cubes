@@ -6,7 +6,7 @@ public class TreeGenerator : MonoBehaviour
     [Header("Spawn Rules")]
     public float spawnChance = 0.015f;
     public float noiseScale = 0.08f;
-    public int minSurfaceY = 0;
+    public int minSurfaceY = 21;
     public int maxSurfaceY = 44;
     public int minTreeDistance = 8;
 
@@ -32,19 +32,10 @@ public class TreeGenerator : MonoBehaviour
 
     private FastNoise noise = new FastNoise();
     private List<Vector2> allTreeWorldPositions = new List<Vector2>();
-    private HashSet<Vector2Int> stampedThisPass = new HashSet<Vector2Int>();
 
     public void StampTrees(TerrainChunk chunk, float[,,] densityMap)
     {
         if (chunk.treeDensityMap == null) return;
-
-        Vector2Int key = new Vector2Int(
-            (int)chunk.transform.position.x,
-            (int)chunk.transform.position.z);
-        lock (stampedThisPass)
-        {
-            if (!stampedThisPass.Add(key)) return;
-        }
 
         System.Array.Clear(chunk.treeDensityMap, 0, chunk.treeDensityMap.Length);
 
@@ -54,15 +45,7 @@ public class TreeGenerator : MonoBehaviour
         int noiseFail = 0;
         int rngFail = 0;
         int surfaceFail = 0;
-        int distanceFail = 0;
 
-        allTreeWorldPositions.RemoveAll(p =>
-        {
-            float cx = chunk.transform.position.x;
-            float cz = chunk.transform.position.z;
-            return p.x >= cx && p.x < cx + width &&
-                   p.y >= cz && p.y < cz + width;
-        });
 
         for (int x = 3; x < width - 3; x++)
             for (int z = 3; z < width - 3; z++)
@@ -91,7 +74,7 @@ public class TreeGenerator : MonoBehaviour
                 foreach (Vector2 existing in allTreeWorldPositions)
                     if (Vector2.Distance(candidate, existing) < minTreeDistance)
                     { tooClose = true; break; }
-                if (tooClose) { distanceFail++; continue; }
+                if (tooClose) { continue; }
 
                 allTreeWorldPositions.Add(candidate);
 
@@ -115,7 +98,18 @@ public class TreeGenerator : MonoBehaviour
                     rng
                 );
             }
-        Debug.Log($"[StampTrees] chunk {chunk.transform.position} | noiseFail={noiseFail} rngFail={rngFail} surfaceFail={surfaceFail} candidates={candidateCount}");
+        // Count marker tree voxels set
+        int markerCount = 0, leafCount = 0, trunkCount = 0;
+        for (int x = 0; x <= TerrainChunk.chunkWidth; x++)
+            for (int y = 0; y <= TerrainChunk.chunkHeight; y++)
+                for (int z = 0; z <= TerrainChunk.chunkWidth; z++)
+                {
+                    float v = chunk.treeDensityMap[x, y, z];
+                    if (v > 0) markerCount++;
+                    if (v >= 1.5f) leafCount++;
+                    else if (v >= 0.5f) trunkCount++;
+                }
+        Debug.Log($"[Debug] StampTrees: chunk {chunk.transform.position} | noiseFail={noiseFail} rngFail={rngFail} surfaceFail={surfaceFail} candidates={candidateCount} | Voxels: {markerCount} (trunk: {trunkCount}, leaf: {leafCount})");
     }
     void GrowBranchWithLeaves(float[,,] density, float[,,] treeMap,
                                int chunkX, int chunkZ,
@@ -269,5 +263,16 @@ public class TreeGenerator : MonoBehaviour
         return !float.IsNaN(v.x) && !float.IsNaN(v.y) && !float.IsNaN(v.z)
             && !float.IsInfinity(v.x) && !float.IsInfinity(v.y) && !float.IsInfinity(v.z);
     }
-    public void ClearStampPass() => stampedThisPass.Clear();
+
+    // Call this when a chunk is destroyed/pooled so its tree positions
+    // don't block tree spawning when that area is regenerated later
+    public void EvictChunkPositions(float chunkWorldX, float chunkWorldZ)
+    {
+        int width = TerrainChunk.chunkWidth;
+        allTreeWorldPositions.RemoveAll(p =>
+            p.x >= chunkWorldX && p.x < chunkWorldX + width &&
+            p.y >= chunkWorldZ && p.y < chunkWorldZ + width);
+    }
+
+    public void ClearStampPass() { } // kept for compatibility, no longer needed
 }

@@ -10,7 +10,10 @@ public class TerrainChunk : MonoBehaviour
     public const int voxelScale = 1;
     public bool densityReady = false;
     public float[,,] densityMap = new float[chunkWidth + 1, chunkHeight + 1, chunkWidth + 1];
-    public float[,,] treeDensityMap = new float[chunkWidth + 1, chunkHeight + 1, chunkWidth + 1];
+// 木（tree）の情報を記録する配列。プール再利用時のみリセット。
+public float[,,] treeStamp = new float[chunkWidth + 1, chunkHeight + 1, chunkWidth + 1];
+// treeDensityMap は treeStamp の別名（他クラス互換用）
+public float[,,] treeDensityMap => treeStamp;
 
 
     [Header("Marching Cubes")]
@@ -36,15 +39,18 @@ public class TerrainChunk : MonoBehaviour
                     float worldZ = origin.z + z * voxelScale;
 
                     float simplex1 = noise.GetSimplex(worldX * 0.8f, worldZ * 0.8f) * 10f;
-                    float simplex2 = noise.GetSimplex(worldX * 3f, worldZ * 3f) * 10f
-                                   * (noise.GetSimplex(worldX * 0.3f, worldZ * 0.3f) + 0.5f);
+                    // Clamp modulator to [0, 1.5] so simplex2 never drags terrain below base
+                    float modulator = Mathf.Clamp(noise.GetSimplex(worldX * 0.3f, worldZ * 0.3f) + 0.5f, 0f, 1.5f);
+                    float simplex2 = noise.GetSimplex(worldX * 3f, worldZ * 3f) * 10f * modulator;
 
-                    float baseLandHeight = (chunkHeight * voxelScale) * 0.5f + simplex1 + simplex2;
+                    // Raise base height so average surface sits well above water
+                    float baseLandHeight = (chunkHeight * voxelScale) * 0.55f + simplex1 + simplex2;
                     float density = baseLandHeight - worldY;
 
                     float caveNoise = noise.GetPerlinFractal(worldX * 5f, worldY * 10f, worldZ * 5f);
                     float caveMask = noise.GetSimplex(worldX * 0.3f, worldZ * 0.3f) + 0.3f;
-                    if (caveNoise > Mathf.Max(caveMask, 0.2f))
+                    // Only carve caves above a minimum height so the floor never opens up
+                    if (worldY > 5f && caveNoise > Mathf.Max(caveMask, 0.2f))
                         density -= 10f;
 
                     densityMap[x, y, z] = density;
@@ -79,8 +85,18 @@ public class TerrainChunk : MonoBehaviour
     public void InitCollider()
     {
         MeshCollider col = GetComponent<MeshCollider>();
-        if (col != null) col.sharedMesh = null; // clear any stale mesh from pooled chunk
+        if (col != null) col.sharedMesh = null;
     }
+
+// プール再利用時に呼ぶ。過去の木情報を消去。
+public void ResetForReuse()
+{
+    densityReady = false;
+    System.Array.Clear(treeStamp, 0, treeStamp.Length);
+    // チャンク位置とともにリセットをログ出力
+    var pos = transform != null ? transform.position.ToString() : "null";
+    Debug.Log($"[Debug] ResetForReuse: Cleared treeStamp for chunk at {pos}");
+}
     // ─────────────────────────────────────────────────────────────
     public void SyncBorderDensity(TerrainChunk neighborX, TerrainChunk neighborZ, TerrainChunk neighborXZ)
     {
@@ -102,10 +118,25 @@ public class TerrainChunk : MonoBehaviour
     // ─────────────────────────────────────────────────────────────
     public void BuildMesh(bool updateCollider = true)
     {
+        // Debug: Check treeStamp marker spread before mesh build
+        float minT = float.MaxValue, maxT = float.MinValue;
+        int cntNonZero = 0;
+        for (int x = 0; x <= chunkWidth; x++)
+            for (int y = 0; y <= chunkHeight; y++)
+                for (int z = 0; z <= chunkWidth; z++)
+                {
+                    float v = treeDensityMap[x, y, z];
+                    if (v != 0) cntNonZero++;
+                    if (v < minT) minT = v;
+                    if (v > maxT) maxT = v;
+                }
+        var posStr = transform != null ? transform.position.ToString() : "null";
+        Debug.Log($"[Debug] BuildMesh: chunk {posStr} | treeMarkers nonzero voxels:{cntNonZero} min:{minT} max:{maxT}");
+        
         var verts = new List<Vector3>();
         var tris = new List<int>();
         var colors = new List<Color>();
-        Vector3[] normals = null;   // ← ADD THIS
+        Vector3[] normals = null;
 
         int step = currentLOD;
         for (int x = 0; x < chunkWidth; x += step)
@@ -121,9 +152,25 @@ public class TerrainChunk : MonoBehaviour
 
     public async Task BuildMeshAsync(bool updateCollider = true, float[,,] treeSnap = null)
     {
+        // Debug: Check treeStamp marker spread before mesh build (async)
+        float minT = float.MaxValue, maxT = float.MinValue;
+        int cntNonZero = 0;
+        for (int x = 0; x <= chunkWidth; x++)
+            for (int y = 0; y <= chunkHeight; y++)
+                for (int z = 0; z <= chunkWidth; z++)
+                {
+                    float v = treeDensityMap[x, y, z];
+                    if (v != 0) cntNonZero++;
+                    if (v < minT) minT = v;
+                    if (v > maxT) maxT = v;
+                }
+        var posStr = transform != null ? transform.position.ToString() : "null";
+        Debug.Log($"[Debug] BuildMeshAsync: chunk {posStr} | treeMarkers nonzero voxels:{cntNonZero} min:{minT} max:{maxT}");
+        
+        // Capture both maps on the main thread before going async
         float[,,] densitySnap = (float[,,])densityMap.Clone();
-        await BuildMeshAsync(updateCollider, treeSnap);
-        float[,,] treeDensitySnap = treeSnap ?? (float[,,])treeDensityMap.Clone();
+        // treeSnap param kept for API compatibility but treeStamp is the source of truth
+        float[,,] treeRead = (float[,,])treeStamp.Clone();
         float iso = isoLevel;
         int s = voxelScale;
         int step = currentLOD;
@@ -133,30 +180,19 @@ public class TerrainChunk : MonoBehaviour
         var colors = new List<Color>();
         Vector3[] normals = null;
 
-        float preMax = 0f;
-        foreach (var v in treeDensitySnap) if (v > preMax) preMax = v;
-
         await Task.Run(() =>
         {
             for (int x = 0; x < chunkWidth; x += step)
                 for (int y = 0; y < chunkHeight; y += step)
                     for (int z = 0; z < chunkWidth; z += step)
                         MarchCubeStatic(new Vector3Int(x, y, z), verts, tris, colors,
-                                        step, densitySnap, treeDensitySnap, iso, s);
+                                        step, densitySnap, treeRead, iso, s);
 
             if (verts.Count > 0)
                 normals = ComputeNormals(verts.ToArray(), tris.ToArray());
         });
 
         if (this == null || gameObject == null || !gameObject.activeSelf) return;
-        int redCount = 0, greenCount = 0, blueCount = 0;
-        foreach (var c in colors)
-        {
-            if (c.r > 0.5f) redCount++;
-            else if (c.g > 0.5f) greenCount++;
-            else blueCount++;
-        }
-        Debug.Log($"COLORS r={redCount} g={greenCount} b={blueCount}");
         ApplyMesh(verts, tris, colors, normals, updateCollider);
     }
 
