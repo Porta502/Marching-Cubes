@@ -95,7 +95,6 @@ public void ResetForReuse()
     System.Array.Clear(treeStamp, 0, treeStamp.Length);
     // チャンク位置とともにリセットをログ出力
     var pos = transform != null ? transform.position.ToString() : "null";
-    Debug.Log($"[Debug] ResetForReuse: Cleared treeStamp for chunk at {pos}");
 }
     // ─────────────────────────────────────────────────────────────
     public void SyncBorderDensity(TerrainChunk neighborX, TerrainChunk neighborZ, TerrainChunk neighborXZ)
@@ -131,7 +130,6 @@ public void ResetForReuse()
                     if (v > maxT) maxT = v;
                 }
         var posStr = transform != null ? transform.position.ToString() : "null";
-        Debug.Log($"[Debug] BuildMesh: chunk {posStr} | treeMarkers nonzero voxels:{cntNonZero} min:{minT} max:{maxT}");
         
         var verts = new List<Vector3>();
         var tris = new List<int>();
@@ -165,7 +163,6 @@ public void ResetForReuse()
                     if (v > maxT) maxT = v;
                 }
         var posStr = transform != null ? transform.position.ToString() : "null";
-        Debug.Log($"[Debug] BuildMeshAsync: chunk {posStr} | treeMarkers nonzero voxels:{cntNonZero} min:{minT} max:{maxT}");
         
         // Capture both maps on the main thread before going async
         float[,,] densitySnap = (float[,,])densityMap.Clone();

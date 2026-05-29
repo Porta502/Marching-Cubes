@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Unity.Burst.CompilerServices;
 using Unity.Collections;
 using UnityEngine;
 
@@ -13,8 +14,8 @@ public class TerrainGenerator : MonoBehaviour
 
     public static Dictionary<ChunkPos, TerrainChunk> chunks = new Dictionary<ChunkPos, TerrainChunk>();
 
-    int chunkDist = 4;
-    int colliderDist = 4;
+    int chunkDist = 5;
+    int colliderDist = 5;
 
     List<TerrainChunk> pooledChunks = new List<TerrainChunk>();
     List<ChunkPos> toGenerate = new List<ChunkPos>();
@@ -78,6 +79,14 @@ public class TerrainGenerator : MonoBehaviour
 
     int GetLOD(ChunkPos cp)
     {
+        if (chunks.TryGetValue(cp, out TerrainChunk ch) && ch != null)
+        {
+            for (int x = 0; x <= TerrainChunk.chunkWidth; x += 4)
+                for (int y = 0; y <= TerrainChunk.chunkHeight; y += 4)
+                    for (int z = 0; z <= TerrainChunk.chunkWidth; z += 4)
+                        if (ch.treeStamp[x, y, z] > 0f) return 1;
+        }
+
         float dist = Vector2.Distance(
             new Vector2(player.position.x, player.position.z),
             new Vector2(cp.x, cp.z));
@@ -305,7 +314,7 @@ public class TerrainGenerator : MonoBehaviour
         coroutineRunning = true;
         while (toGenerate.Count > 0)
         {
-            if (building.Count == 0)
+            if (building.Count < 3)
             {
                 int batchX = toGenerate[0].x;
                 int batchZ = toGenerate[0].z;
