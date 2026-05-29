@@ -6,12 +6,10 @@ using UnityEngine;
 
 public class TerrainGenerator : MonoBehaviour
 {
-
     public GameObject terrainChunk;
     public Transform player;
     public Material terrainMaterial;
     public TreeGenerator treeGenerator;
-
 
     public static Dictionary<ChunkPos, TerrainChunk> chunks = new Dictionary<ChunkPos, TerrainChunk>();
 
@@ -25,9 +23,9 @@ public class TerrainGenerator : MonoBehaviour
 
     static int ChunkWorldSize => TerrainChunk.chunkWidth * TerrainChunk.voxelScale;
 
-    // ─────────────────────────────────────────────────────────────
     NativeArray<float> _sharedDensity;
     NativeArray<float> _sharedTreeDensity;
+
     void Start()
     {
         int curChunkPosX = Mathf.FloorToInt(player.position.x / ChunkWorldSize) * ChunkWorldSize;
@@ -37,12 +35,8 @@ public class TerrainGenerator : MonoBehaviour
             for (int j = curChunkPosZ - ChunkWorldSize * chunkDist; j <= curChunkPosZ + ChunkWorldSize * chunkDist; j += ChunkWorldSize)
                 BuildChunkImmediate(i, j);
 
-        treeGenerator.ClearStampPass();
         foreach (var kvp in chunks)
-        {
-            System.Array.Clear(kvp.Value.treeDensityMap, 0, kvp.Value.treeDensityMap.Length);
             treeGenerator.StampTrees(kvp.Value, kvp.Value.densityMap);
-        }
 
         foreach (var kvp in chunks)
         {
@@ -51,6 +45,7 @@ public class TerrainGenerator : MonoBehaviour
             chunks.TryGetValue(new ChunkPos(cp.x, cp.z + ChunkWorldSize), out TerrainChunk nz);
             chunks.TryGetValue(new ChunkPos(cp.x + ChunkWorldSize, cp.z + ChunkWorldSize), out TerrainChunk nxz);
             kvp.Value.SyncBorderDensity(nx, nz, nxz);
+            kvp.Value.SyncBorderTreeStamp(nx, nz, nxz);
             kvp.Value.currentLOD = GetLOD(cp);
             kvp.Value.BuildMesh(IsNearPlayer(cp, colliderDist));
 
@@ -60,7 +55,7 @@ public class TerrainGenerator : MonoBehaviour
 
         SpawnPlayerOnSurface();
     }
-    // ─────────────────────────────────────────────────────────────
+
     float lodTimer = 0f;
     int lodUpdateIndex = 0;
 
@@ -81,7 +76,6 @@ public class TerrainGenerator : MonoBehaviour
         }
     }
 
-    // ─────────────────────────────────────────────────────────────
     int GetLOD(ChunkPos cp)
     {
         float dist = Vector2.Distance(
@@ -100,7 +94,6 @@ public class TerrainGenerator : MonoBehaviour
             && Mathf.Abs(cp.z - pz) <= ChunkWorldSize * distInChunks;
     }
 
-    // ─────────────────────────────────────────────────────────────
     async void UpdateChunkLOD(ChunkPos cp, TerrainChunk chunk)
     {
         if (chunk == null || !chunk.gameObject.activeSelf) return;
@@ -112,7 +105,7 @@ public class TerrainGenerator : MonoBehaviour
 
         await chunk.BuildMeshAsync(needCollider);
     }
-    // ─────────────────────────────────────────────────────────────
+
     void SpawnPlayerOnSurface()
     {
         Vector3 rayStart = new Vector3(player.position.x, 9999f, player.position.z);
@@ -124,7 +117,6 @@ public class TerrainGenerator : MonoBehaviour
                 player.position.z);
     }
 
-    // ─────────────────────────────────────────────────────────────
     void BuildChunkImmediate(int xPos, int zPos)
     {
         TerrainChunk chunk;
@@ -141,13 +133,13 @@ public class TerrainGenerator : MonoBehaviour
             GameObject go = Instantiate(terrainChunk, new Vector3(xPos, 0, zPos), Quaternion.identity);
             chunk = go.GetComponent<TerrainChunk>();
         }
+
         chunk.GetComponent<MeshRenderer>().material = terrainMaterial;
         chunk.InitCollider();
         chunk.GenerateDensity(chunk.transform.position);
         chunks.Add(new ChunkPos(xPos, zPos), chunk);
     }
 
-    // ─────────────────────────────────────────────────────────────
     async Task BuildChunkAsync(int xPos, int zPos)
     {
         ChunkPos cp = new ChunkPos(xPos, zPos);
@@ -168,8 +160,9 @@ public class TerrainGenerator : MonoBehaviour
             GameObject go = Instantiate(terrainChunk, new Vector3(xPos, 0, zPos), Quaternion.identity);
             chunk = go.GetComponent<TerrainChunk>();
         }
+
         chunk.GetComponent<MeshRenderer>().material = terrainMaterial;
-        chunk.InitCollider(); // ← clear stale collider from pooled chunk
+        chunk.InitCollider();
         chunks.Add(cp, chunk);
 
         Vector3 chunkOrigin = chunk.transform.position;
@@ -184,18 +177,21 @@ public class TerrainGenerator : MonoBehaviour
             building.Remove(cp);
             return;
         }
+
+        treeGenerator.StampTrees(chunk, chunk.densityMap);
+
         int s = ChunkWorldSize;
         await Task.WhenAll(
-            SyncAndBuildAsync(xPos, zPos),
-            SyncAndBuildAsync(xPos - s, zPos),
-            SyncAndBuildAsync(xPos, zPos - s),
-            SyncAndBuildAsync(xPos - s, zPos - s)
+            BuildNewChunkAsync(xPos, zPos),
+            RebuildNeighbourAsync(xPos - s, zPos),
+            RebuildNeighbourAsync(xPos, zPos - s),
+            RebuildNeighbourAsync(xPos - s, zPos - s)
         );
 
         building.Remove(cp);
     }
-    // ─────────────────────────────────────────────────────────────
-    async Task SyncAndBuildAsync(int xPos, int zPos)
+
+    async Task BuildNewChunkAsync(int xPos, int zPos)
     {
         if (!chunks.TryGetValue(new ChunkPos(xPos, zPos), out TerrainChunk chunk)) return;
 
@@ -215,11 +211,8 @@ public class TerrainGenerator : MonoBehaviour
             waited++;
         }
 
-        // Always clear global position state so newly-stamped trees don't get crowded out by prior ones.
-        treeGenerator?.ClearStampPass();
-        // IMPORTANT: Call StampTrees BEFORE SyncBorderDensity, to exactly match initial worldgen path.
-        treeGenerator?.StampTrees(chunk, chunk.densityMap);
         chunk.SyncBorderDensity(nx, nz, nxz);
+        chunk.SyncBorderTreeStamp(nx, nz, nxz);
 
         ChunkPos cp = new ChunkPos(xPos, zPos);
         chunk.currentLOD = GetLOD(cp);
@@ -229,6 +222,25 @@ public class TerrainGenerator : MonoBehaviour
 
         WaterChunk wat = chunk.GetComponentInChildren<WaterChunk>();
         if (wat != null) { wat.SetLocs(chunk.densityMap); wat.BuildMesh(); }
+    }
+
+    async Task RebuildNeighbourAsync(int xPos, int zPos)
+    {
+        if (!chunks.TryGetValue(new ChunkPos(xPos, zPos), out TerrainChunk chunk)) return;
+        if (chunk == null || !chunk.gameObject.activeSelf) return;
+
+        int s = ChunkWorldSize;
+        chunks.TryGetValue(new ChunkPos(xPos + s, zPos), out TerrainChunk nx);
+        chunks.TryGetValue(new ChunkPos(xPos, zPos + s), out TerrainChunk nz);
+        chunks.TryGetValue(new ChunkPos(xPos + s, zPos + s), out TerrainChunk nxz);
+
+        chunk.SyncBorderDensity(nx, nz, nxz);
+        chunk.SyncBorderTreeStamp(nx, nz, nxz);
+
+        ChunkPos cp = new ChunkPos(xPos, zPos);
+        bool needCollider = IsNearPlayer(cp, colliderDist);
+
+        await chunk.BuildMeshAsync(needCollider);
     }
 
     ChunkPos curChunk = new ChunkPos(-1, -1);
@@ -244,7 +256,6 @@ public class TerrainGenerator : MonoBehaviour
             for (int j = curChunkPosZ - ChunkWorldSize * chunkDist; j <= curChunkPosZ + ChunkWorldSize * chunkDist; j += ChunkWorldSize)
             {
                 ChunkPos cp = new ChunkPos(i, j);
-                // ← also skip chunks currently being built
                 if (!chunks.ContainsKey(cp) && !toGenerate.Contains(cp) && !building.Contains(cp))
                     toGenerate.Add(cp);
             }
@@ -289,7 +300,6 @@ public class TerrainGenerator : MonoBehaviour
             StartCoroutine(DelayBuildChunks());
     }
 
-    // ─────────────────────────────────────────────────────────────
     IEnumerator DelayBuildChunks()
     {
         coroutineRunning = true;
@@ -310,6 +320,4 @@ public class TerrainGenerator : MonoBehaviour
         }
         coroutineRunning = false;
     }
-
-
 }

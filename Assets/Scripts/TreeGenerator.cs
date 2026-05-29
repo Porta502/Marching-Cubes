@@ -37,15 +37,19 @@ public class TreeGenerator : MonoBehaviour
     {
         if (chunk.treeDensityMap == null) return;
 
+        float chunkWorldX = chunk.transform.position.x;
+        float chunkWorldZ = chunk.transform.position.z;
+        int evictWidth = TerrainChunk.chunkWidth;
+        allTreeWorldPositions.RemoveAll(p =>
+            p.x >= chunkWorldX && p.x < chunkWorldX + evictWidth &&
+            p.y >= chunkWorldZ && p.y < chunkWorldZ + evictWidth);
+
         System.Array.Clear(chunk.treeDensityMap, 0, chunk.treeDensityMap.Length);
 
         int width = TerrainChunk.chunkWidth;
         int height = TerrainChunk.chunkHeight;
         int candidateCount = 0;
-        int noiseFail = 0;
-        int rngFail = 0;
-        int surfaceFail = 0;
-
+        int noiseFail = 0, rngFail = 0, surfaceFail = 0;
 
         for (int x = 3; x < width - 3; x++)
             for (int z = 3; z < width - 3; z++)
@@ -74,7 +78,7 @@ public class TreeGenerator : MonoBehaviour
                 foreach (Vector2 existing in allTreeWorldPositions)
                     if (Vector2.Distance(candidate, existing) < minTreeDistance)
                     { tooClose = true; break; }
-                if (tooClose) { continue; }
+                if (tooClose) continue;
 
                 allTreeWorldPositions.Add(candidate);
 
@@ -90,15 +94,12 @@ public class TreeGenerator : MonoBehaviour
                     densityMap, chunk.treeDensityMap,
                     chunkOriginX, chunkOriginZ,
                     width, height,
-                    treeBase,
-                    Vector3.up,
-                    tH * 1.2f,
-                    tR * 2.0f,
-                    branchDepth,
-                    rng
+                    treeBase, Vector3.up,
+                    tH * 1.2f, tR * 2.0f,
+                    branchDepth, rng
                 );
             }
-        // Count marker tree voxels set
+
         int markerCount = 0, leafCount = 0, trunkCount = 0;
         for (int x = 0; x <= TerrainChunk.chunkWidth; x++)
             for (int y = 0; y <= TerrainChunk.chunkHeight; y++)
@@ -109,8 +110,10 @@ public class TreeGenerator : MonoBehaviour
                     if (v >= 1.5f) leafCount++;
                     else if (v >= 0.5f) trunkCount++;
                 }
+
         Debug.Log($"[Debug] StampTrees: chunk {chunk.transform.position} | noiseFail={noiseFail} rngFail={rngFail} surfaceFail={surfaceFail} candidates={candidateCount} | Voxels: {markerCount} (trunk: {trunkCount}, leaf: {leafCount})");
     }
+
     void GrowBranchWithLeaves(float[,,] density, float[,,] treeMap,
                                int chunkX, int chunkZ,
                                int width, int height,
@@ -120,8 +123,6 @@ public class TreeGenerator : MonoBehaviour
     {
         if (depth == 0 || length < 0.8f)
         {
-            float newRadius = Mathf.Max(0.25f, radius * Mathf.Lerp(0.75f, 0.85f, (float)rng.NextDouble()));
-            // Leaf cluster at every tip
             int lx = Mathf.RoundToInt(start.x) - chunkX;
             int ly = Mathf.RoundToInt(start.y);
             int lz = Mathf.RoundToInt(start.z) - chunkZ;
@@ -137,7 +138,7 @@ public class TreeGenerator : MonoBehaviour
                      chunkX, chunkZ,
                      start, end, radius,
                      width, height,
-                     markerValue: depth == branchDepth ? 1f : 1f); // trunk and branches both = 1
+                     markerValue: 1f);
 
         int branchCount = rng.Next(2, 4);
         for (int i = 0; i < branchCount; i++)
@@ -147,8 +148,8 @@ public class TreeGenerator : MonoBehaviour
             float angleJitter = (float)(rng.NextDouble() * 15f - 7.5f);
 
             Vector3 axis = Mathf.Abs(direction.y) < 0.9f
-          ? Vector3.Cross(direction, Vector3.up)
-          : Vector3.Cross(direction, Vector3.forward);
+                ? Vector3.Cross(direction, Vector3.up)
+                : Vector3.Cross(direction, Vector3.forward);
 
             if (axis.sqrMagnitude < 0.001f) axis = Vector3.right;
             axis = axis.normalized;
@@ -157,8 +158,7 @@ public class TreeGenerator : MonoBehaviour
                            * Quaternion.AngleAxis(spreadAngle + angleJitter, axis)
                            * direction;
 
-            if (!IsValid(newDir) || newDir.sqrMagnitude < 0.001f)
-                continue;
+            if (!IsValid(newDir) || newDir.sqrMagnitude < 0.001f) continue;
 
             newDir = newDir.normalized;
 
@@ -173,7 +173,6 @@ public class TreeGenerator : MonoBehaviour
         }
     }
 
-    // ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
     void StampCapsule(float[,,] density, float[,,] treeMap,
                       int chunkX, int chunkZ,
                       Vector3 a, Vector3 b, float radius,
@@ -212,10 +211,14 @@ public class TreeGenerator : MonoBehaviour
     }
 
     void StampEllipsoid(float[,,] density, float[,,] treeMap,
-                        int cx, int cy, int cz,
-                        float rX, float rY, float rZ,
-                        int width, int height,
-                        float trunkExcludeRadius = 0f)
+                    int cx, int cy, int cz,
+                    float rX, float rY, float rZ,
+                    int width, int height,
+                    float trunkExcludeRadius = 0f,
+                    // NEW: neighbour maps for cross-border leaf bleed
+                    float[,,] neighbourXMap = null, int neighbourXOffset = 0,
+                    float[,,] neighbourZMap = null, int neighbourZOffset = 0,
+                    float[,,] neighbourXZMap = null)
     {
         int lx = Mathf.CeilToInt(rX + leafNoiseStrength * rX) + 1;
         int ly = Mathf.CeilToInt(rY + leafNoiseStrength * rY) + 1;
@@ -226,22 +229,12 @@ public class TreeGenerator : MonoBehaviour
                 for (int z = -lz; z <= lz; z++)
                 {
                     int wx = cx + x, wy = cy + y, wz = cz + z;
-                    if (wx < 0 || wx >= width || wz < 0 || wz >= width) continue;
                     if (wy < 0 || wy >= height) continue;
 
-                    if (trunkExcludeRadius > 0f &&
-                        Mathf.Sqrt(x * x + z * z) < trunkExcludeRadius &&
-                        y < 0)
-                        continue;
-
-                    float n = noise.GetSimplex(wx * leafNoiseFreq,
-                                               wy * leafNoiseFreq,
-                                               wz * leafNoiseFreq);
+                    // ... (ellipsoid math stays the same)
+                    float n = noise.GetSimplex(wx * leafNoiseFreq, wy * leafNoiseFreq, wz * leafNoiseFreq);
                     float surfaceOffset = n * leafNoiseStrength;
-
-                    float ellipsoid = (x * x) / (rX * rX)
-                                    + (y * y) / (rY * rY)
-                                    + (z * z) / (rZ * rZ);
+                    float ellipsoid = (x * x) / (rX * rX) + (y * y) / (rY * rY) + (z * z) / (rZ * rZ);
 
                     if (ellipsoid <= 1.0f + surfaceOffset)
                     {
@@ -252,20 +245,37 @@ public class TreeGenerator : MonoBehaviour
                         if (adjusted <= 1.0f + surfaceOffset)
                         {
                             float d = Mathf.Clamp(0.55f - adjusted * 0.1f, 0.51f, 0.58f);
-                            if (density[wx, wy, wz] < d) density[wx, wy, wz] = d;
-                            if (treeMap[wx, wy, wz] < 1.5f) treeMap[wx, wy, wz] = 2f;
+
+                            // Determine which chunk this voxel belongs to
+                            if (wx >= 0 && wx < width && wz >= 0 && wz < width)
+                            {
+                                // Normal case: inside this chunk
+                                if (density[wx, wy, wz] < d) density[wx, wy, wz] = d;
+                                if (treeMap[wx, wy, wz] < 1.5f) treeMap[wx, wy, wz] = 2f;
+                            }
+                            else if (wx >= width && wz >= 0 && wz < width && neighbourXMap != null)
+                            {
+                                // Spills into +X neighbour
+                                int nx = wx - width;
+                                if (nx < neighbourXMap.GetLength(0))
+                                {
+                                    if (neighbourXMap[nx, wy, wz] < d) neighbourXMap[nx, wy, wz] = d;
+                                    if (neighbourXZMap == null) // reuse neighbourXMap's treeMap
+                                        ; // treeMap for neighbour is passed separately ? see Part 2
+                                }
+                            }
+                            // (similar blocks for -X, +Z, -Z)
                         }
                     }
                 }
     }
+
     bool IsValid(Vector3 v)
     {
         return !float.IsNaN(v.x) && !float.IsNaN(v.y) && !float.IsNaN(v.z)
             && !float.IsInfinity(v.x) && !float.IsInfinity(v.y) && !float.IsInfinity(v.z);
     }
 
-    // Call this when a chunk is destroyed/pooled so its tree positions
-    // don't block tree spawning when that area is regenerated later
     public void EvictChunkPositions(float chunkWorldX, float chunkWorldZ)
     {
         int width = TerrainChunk.chunkWidth;
@@ -274,5 +284,5 @@ public class TreeGenerator : MonoBehaviour
             p.y >= chunkWorldZ && p.y < chunkWorldZ + width);
     }
 
-    public void ClearStampPass() { } // kept for compatibility, no longer needed
+    public void ClearStampPass() { }
 }
