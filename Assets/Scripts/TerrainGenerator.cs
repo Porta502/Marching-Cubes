@@ -108,11 +108,9 @@ public class TerrainGenerator : MonoBehaviour
         if (chunk == null || !chunk.gameObject.activeSelf) return;
         int newLOD = GetLOD(cp);
         if (newLOD == chunk.currentLOD) return;
-
         chunk.currentLOD = newLOD;
-        bool needCollider = IsNearPlayer(cp, colliderDist);
 
-        await chunk.BuildMeshAsync(needCollider);
+        await chunk.BuildMeshGPU(IsNearPlayer(cp, colliderDist)).Task;
     }
 
     void SpawnPlayerOnSurface()
@@ -227,7 +225,7 @@ public class TerrainGenerator : MonoBehaviour
         chunk.currentLOD = GetLOD(cp);
         bool needCollider = IsNearPlayer(cp, colliderDist);
 
-        await chunk.BuildMeshAsync(needCollider);
+        await chunk.BuildMeshGPU(needCollider).Task;
 
         WaterChunk wat = chunk.GetComponentInChildren<WaterChunk>();
         if (wat != null) { wat.SetLocs(chunk.densityMap); wat.BuildMesh(); }
