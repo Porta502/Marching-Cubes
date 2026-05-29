@@ -110,8 +110,6 @@ public class TreeGenerator : MonoBehaviour
                     if (v >= 1.5f) leafCount++;
                     else if (v >= 0.5f) trunkCount++;
                 }
-
-        Debug.Log($"[Debug] StampTrees: chunk {chunk.transform.position} | noiseFail={noiseFail} rngFail={rngFail} surfaceFail={surfaceFail} candidates={candidateCount} | Voxels: {markerCount} (trunk: {trunkCount}, leaf: {leafCount})");
     }
 
     void GrowBranchWithLeaves(float[,,] density, float[,,] treeMap,

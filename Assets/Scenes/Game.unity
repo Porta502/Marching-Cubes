@@ -17,7 +17,7 @@ RenderSettings:
   m_Fog: 1
   m_FogColor: {r: 0.7924528, g: 0.7924528, b: 0.7924528, a: 1}
   m_FogMode: 3
-  m_FogDensity: 0.01
+  m_FogDensity: 0.02
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
   m_AmbientSkyColor: {r: 0.5377358, g: 0.5377358, b: 0.5377358, a: 1}
@@ -2128,7 +2128,7 @@ Camera:
     width: 1
     height: 1
   near clip plane: 0.3
-  far clip plane: 1000
+  far clip plane: 200
   field of view: 65
   orthographic: 0
   orthographic size: 5
@@ -2193,7 +2193,7 @@ MonoBehaviour:
   maxDist: 4
   editStrength: 15
   editRadius: 1.5
-  player: {fileID: 0}
+  player: {fileID: 1100592808}
   buildSafeRadius: 2
 --- !u!114 &963194231
 MonoBehaviour:
