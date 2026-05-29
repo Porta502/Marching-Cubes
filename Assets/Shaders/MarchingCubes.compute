@@ -1,0 +1,127 @@
+// MarchingCubes.compute
+// Drop this file into Assets/Shaders/ (or any folder — Unity finds .compute files automatically)
+// This replaces MarchCubeStatic entirely. Runs on the GPU in parallel.
+
+#pragma kernel MarchChunk
+
+// ── output ───────────────────────────────────────────────────────────────────
+struct Triangle
+{
+    float3 a, b, c;         // vertex positions (local space)
+    float3 colorA, colorB, colorC; // per-vertex colors packed as float3
+};
+
+RWStructuredBuffer<Triangle> _Triangles;
+RWStructuredBuffer<int>      _TriangleCount; // [0] = atomic counter
+
+// ── input ────────────────────────────────────────────────────────────────────
+StructuredBuffer<float> _Density;   // flattened [x*(H+1)*(W+1) + y*(W+1) + z]
+StructuredBuffer<float> _TreeStamp; // same layout
+
+uniform float _IsoLevel;
+uniform int   _Width;   // chunkWidth  = 24
+uniform int   _Height;  // chunkHeight = 48
+uniform int   _Scale;   // voxelScale  = 1
+uniform int   _Step;    // LOD step    = 1, 2, 4 …
+
+// ── lookup tables (256 entries, max 16 edge indices each) ────────────────────
+// These are the standard Paul Bourke / Lode tables encoded as int arrays.
+// Unity doesn't support initialiser-list arrays in HLSL, so we use two
+// StructuredBuffers uploaded from C# once at startup.
+StructuredBuffer<int> _Triangulation;    // [256 * 16]  -1 terminated rows
+StructuredBuffer<int> _CornerIndexA;     // [12]
+StructuredBuffer<int> _CornerIndexB;     // [12]
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+int Idx(int x, int y, int z)
+{
+    return x * (_Height + 1) * (_Width + 1) + y * (_Width + 1) + z;
+}
+
+float3 Interp(float dA, float dB, float3 pA, float3 pB)
+{
+    if (abs(dB - dA) < 0.0001f) return pA;
+    float t = (_IsoLevel - dA) / (dB - dA);
+    return pA + t * (pB - pA);
+}
+
+// ── kernel ───────────────────────────────────────────────────────────────────
+// Each thread handles one voxel cube at (x, y, z).
+// Dispatch with (Width/step, Height/step, Width/step) groups of (1,1,1).
+[numthreads(4, 4, 4)]
+void MarchChunk(uint3 id : SV_DispatchThreadID)
+{
+    int x = (int)id.x * _Step;
+    int y = (int)id.y * _Step;
+    int z = (int)id.z * _Step;
+
+    // bounds check — last slice has no +step neighbour
+    if (x + _Step > _Width || y + _Step > _Height || z + _Step > _Width) return;
+
+    // ── 8 corner densities ────────────────────────────────────────────────────
+    float d[8];
+    d[0] = _Density[Idx(x,        y,        z       )];
+    d[1] = _Density[Idx(x+_Step,  y,        z       )];
+    d[2] = _Density[Idx(x+_Step,  y,        z+_Step )];
+    d[3] = _Density[Idx(x,        y,        z+_Step )];
+    d[4] = _Density[Idx(x,        y+_Step,  z       )];
+    d[5] = _Density[Idx(x+_Step,  y+_Step,  z       )];
+    d[6] = _Density[Idx(x+_Step,  y+_Step,  z+_Step )];
+    d[7] = _Density[Idx(x,        y+_Step,  z+_Step )];
+
+    // ── cube index ────────────────────────────────────────────────────────────
+    int cubeIndex = 0;
+    for (int i = 0; i < 8; i++)
+        if (d[i] > _IsoLevel) cubeIndex |= (1 << i);
+    if (cubeIndex == 0 || cubeIndex == 255) return;
+
+    // ── treeStamp color ───────────────────────────────────────────────────────
+    float tMax = 0;
+    tMax = max(tMax, _TreeStamp[Idx(x,        y,        z       )]);
+    tMax = max(tMax, _TreeStamp[Idx(x+_Step,  y,        z       )]);
+    tMax = max(tMax, _TreeStamp[Idx(x+_Step,  y,        z+_Step )]);
+    tMax = max(tMax, _TreeStamp[Idx(x,        y,        z+_Step )]);
+    tMax = max(tMax, _TreeStamp[Idx(x,        y+_Step,  z       )]);
+    tMax = max(tMax, _TreeStamp[Idx(x+_Step,  y+_Step,  z       )]);
+    tMax = max(tMax, _TreeStamp[Idx(x+_Step,  y+_Step,  z+_Step )]);
+    tMax = max(tMax, _TreeStamp[Idx(x,        y+_Step,  z+_Step )]);
+
+    float3 col = tMax >= 1.5f ? float3(0,1,0)
+               : tMax >= 0.5f ? float3(1,0,0)
+               : float3(0,0,1);
+
+    // ── 8 corner positions (local space) ──────────────────────────────────────
+    float s = (float)_Scale;
+    float3 p[8];
+    p[0] = float3(x,       y,       z      ) * s;
+    p[1] = float3(x+_Step, y,       z      ) * s;
+    p[2] = float3(x+_Step, y,       z+_Step) * s;
+    p[3] = float3(x,       y,       z+_Step) * s;
+    p[4] = float3(x,       y+_Step, z      ) * s;
+    p[5] = float3(x+_Step, y+_Step, z      ) * s;
+    p[6] = float3(x+_Step, y+_Step, z+_Step) * s;
+    p[7] = float3(x,       y+_Step, z+_Step) * s;
+
+    // ── emit triangles ────────────────────────────────────────────────────────
+    int row = cubeIndex * 16;
+    for (int t = 0; t < 16; t += 3)
+    {
+        if (_Triangulation[row + t] == -1) break;
+
+        int eA = _Triangulation[row + t    ];
+        int eB = _Triangulation[row + t + 1];
+        int eC = _Triangulation[row + t + 2];
+
+        Triangle tri;
+        tri.a      = Interp(d[_CornerIndexA[eA]], d[_CornerIndexB[eA]], p[_CornerIndexA[eA]], p[_CornerIndexB[eA]]);
+        tri.b      = Interp(d[_CornerIndexA[eB]], d[_CornerIndexB[eB]], p[_CornerIndexA[eB]], p[_CornerIndexB[eB]]);
+        tri.c      = Interp(d[_CornerIndexA[eC]], d[_CornerIndexB[eC]], p[_CornerIndexA[eC]], p[_CornerIndexB[eC]]);
+        tri.colorA = col;
+        tri.colorB = col;
+        tri.colorC = col;
+
+        int idx = 0;
+        InterlockedAdd(_TriangleCount[0], 1, idx);
+        _Triangles[idx] = tri;
+    }
+}

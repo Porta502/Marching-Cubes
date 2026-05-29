@@ -88,14 +88,6 @@ public float[,,] treeDensityMap => treeStamp;
         if (col != null) col.sharedMesh = null;
     }
 
-// プール再利用時に呼ぶ。過去の木情報を消去。
-public void ResetForReuse()
-{
-    densityReady = false;
-    System.Array.Clear(treeStamp, 0, treeStamp.Length);
-    // チャンク位置とともにリセットをログ出力
-    var pos = transform != null ? transform.position.ToString() : "null";
-}
     // ─────────────────────────────────────────────────────────────
     public void SyncBorderDensity(TerrainChunk neighborX, TerrainChunk neighborZ, TerrainChunk neighborXZ)
     {
@@ -150,7 +142,6 @@ public void ResetForReuse()
 
     public async Task BuildMeshAsync(bool updateCollider = true, float[,,] treeSnap = null)
     {
-        // Debug: Check treeStamp marker spread before mesh build (async)
         float minT = float.MaxValue, maxT = float.MinValue;
         int cntNonZero = 0;
         for (int x = 0; x <= chunkWidth; x++)
@@ -217,10 +208,25 @@ public void ResetForReuse()
         GetComponent<MeshFilter>().mesh = finalMesh;
 
         if (updateCollider)
+            StartCoroutine(BakeColliderAsync(finalMesh));
+
+        IEnumerator BakeColliderAsync(Mesh mesh)
         {
-            MeshCollider col = GetComponent<MeshCollider>();
-            col.cookingOptions = MeshColliderCookingOptions.CookForFasterSimulation;
-            col.sharedMesh = finalMesh;
+            int meshID = mesh.GetInstanceID();
+            // BakeMesh runs on a thread pool thread — zero main thread cost
+            yield return new WaitUntil(() =>
+            {
+                System.Threading.Tasks.Task.Run(() => Physics.BakeMesh(meshID, false));
+                return true;
+            });
+            yield return null; // wait one frame for bake to finish
+            yield return null;
+            var col = GetComponent<MeshCollider>();
+            if (col != null && this != null && gameObject.activeSelf)
+            {
+                col.cookingOptions = MeshColliderCookingOptions.CookForFasterSimulation;
+                col.sharedMesh = mesh;
+            }
         }
     }
 
@@ -328,4 +334,78 @@ public void ResetForReuse()
                     treeStamp[chunkWidth, y, chunkWidth],
                     neighborXZ.treeStamp[0, y, 0]);
     }
-}
+
+    float[] _flatDensity = new float[(chunkWidth + 1) * (chunkHeight + 1) * (chunkWidth + 1)];
+    float[] _flatTreeStamp = new float[(chunkWidth + 1) * (chunkHeight + 1) * (chunkWidth + 1)];
+    // Flattens the 3D densityMap to a 1D array the compute shader can read.
+    // Layout: index = x*(H+1)*(W+1) + y*(W+1) + z
+    public float[] FlattenDensity()
+    {
+        int W = chunkWidth + 1, H = chunkHeight + 1;
+        for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+                for (int z = 0; z < W; z++)
+                    _flatDensity[x * H * W + y * W + z] = densityMap[x, y, z];
+        return _flatDensity; // returns reference, no alloc
+    }
+
+    public float[] FlattenTreeStamp()
+    {
+        int W = chunkWidth + 1, H = chunkHeight + 1;
+        for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+                for (int z = 0; z < W; z++)
+                    _flatTreeStamp[x * H * W + y * W + z] = treeStamp[x, y, z];
+        return _flatTreeStamp;
+    }
+
+    // Also clear them in ResetForReuse():
+    public void ResetForReuse()
+    {
+        densityReady = false;
+        System.Array.Clear(treeStamp, 0, treeStamp.Length);
+        System.Array.Clear(_flatDensity, 0, _flatDensity.Length);
+        System.Array.Clear(_flatTreeStamp, 0, _flatTreeStamp.Length);
+       
+    }
+    public System.Threading.Tasks.TaskCompletionSource<bool> BuildMeshGPU(bool updateCollider = true)
+    {
+        var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
+
+        float[] flatDensity = FlattenDensity();
+        float[] flatTree = FlattenTreeStamp();
+
+        GPUMarchDispatcher.Instance.DispatchAsync(
+            flatDensity, flatTree,
+            isoLevel, chunkWidth, chunkHeight, voxelScale, currentLOD,
+            (meshData) =>
+            {
+                if (this == null || !gameObject.activeSelf)
+                { tcs.TrySetResult(false); return; }
+
+                if (meshData == null)
+                {
+                    GetComponent<MeshFilter>().mesh = null;
+                    if (updateCollider)
+                    {
+                        var col = GetComponent<MeshCollider>();
+                        if (col != null) col.sharedMesh = null;
+                    }
+                    tcs.TrySetResult(true);
+                    return;
+                }
+
+                ApplyMesh(
+                    new System.Collections.Generic.List<Vector3>(meshData.verts),
+                    new System.Collections.Generic.List<int>(meshData.tris),
+                    new System.Collections.Generic.List<Color>(meshData.colors),
+                    meshData.normals,
+                    updateCollider);
+
+                tcs.TrySetResult(true);
+            });
+
+        return tcs;
+    }
+
+} 
