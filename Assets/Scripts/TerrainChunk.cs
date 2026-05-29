@@ -310,4 +310,25 @@ public void ResetForReuse()
         float t = (iso - dA) / (dB - dA);
         return pA + t * (pB - pA);
     }
+
+    public void SyncBorderTreeStamp(TerrainChunk neighborX, TerrainChunk neighborZ, TerrainChunk neighborXZ)
+    {
+        if (neighborX != null)
+            for (int y = 0; y <= chunkHeight; y++)
+                for (int z = 0; z <= chunkWidth; z++)
+                    treeStamp[chunkWidth, y, z] = Mathf.Max(treeStamp[chunkWidth, y, z],
+                                                             neighborX.treeStamp[0, y, z]);
+
+        if (neighborZ != null)
+            for (int y = 0; y <= chunkHeight; y++)
+                for (int x = 0; x <= chunkWidth; x++)
+                    treeStamp[x, y, chunkWidth] = Mathf.Max(treeStamp[x, y, chunkWidth],
+                                                             neighborZ.treeStamp[x, y, 0]);
+
+        if (neighborXZ != null)
+            for (int y = 0; y <= chunkHeight; y++)
+                treeStamp[chunkWidth, y, chunkWidth] = Mathf.Max(
+                    treeStamp[chunkWidth, y, chunkWidth],
+                    neighborXZ.treeStamp[0, y, 0]);
+    }
 }

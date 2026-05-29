@@ -231,7 +231,7 @@ MonoBehaviour:
   terrainChunk: {fileID: 6546764858940181633, guid: 5ce7861e514decf459c0596a9a9e7c6c,
     type: 3}
   player: {fileID: 1100592808}
-  terrainMaterial: {fileID: 2100000, guid: 300266d127ce21249a8ccf6686144522, type: 2}
+  terrainMaterial: {fileID: 2100000, guid: 57ae17cbb73aceb4babaace866637436, type: 2}
   treeGenerator: {fileID: 679654709}
 --- !u!4 &220957753
 Transform:
