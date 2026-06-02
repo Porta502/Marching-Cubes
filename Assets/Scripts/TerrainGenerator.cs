@@ -1,8 +1,6 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Unity.Burst.CompilerServices;
-using Unity.Collections;
 using UnityEngine;
 
 public class TerrainGenerator : MonoBehaviour
@@ -24,9 +22,7 @@ public class TerrainGenerator : MonoBehaviour
 
     static int ChunkWorldSize => TerrainChunk.chunkWidth * TerrainChunk.voxelScale;
 
-    NativeArray<float> _sharedDensity;
-    NativeArray<float> _sharedTreeDensity;
-
+    // 
     void Start()
     {
         int curChunkPosX = Mathf.FloorToInt(player.position.x / ChunkWorldSize) * ChunkWorldSize;
@@ -36,6 +32,8 @@ public class TerrainGenerator : MonoBehaviour
             for (int j = curChunkPosZ - ChunkWorldSize * chunkDist; j <= curChunkPosZ + ChunkWorldSize * chunkDist; j += ChunkWorldSize)
                 BuildChunkImmediate(i, j);
 
+        // FIX #6: ClearStampPass() must be called before stamping trees
+        treeGenerator.ClearStampPass();
         foreach (var kvp in chunks)
             treeGenerator.StampTrees(kvp.Value, kvp.Value.densityMap);
 
@@ -57,6 +55,7 @@ public class TerrainGenerator : MonoBehaviour
         SpawnPlayerOnSurface();
     }
 
+    // 
     float lodTimer = 0f;
     int lodUpdateIndex = 0;
 
@@ -77,16 +76,9 @@ public class TerrainGenerator : MonoBehaviour
         }
     }
 
+    // 
     int GetLOD(ChunkPos cp)
     {
-        if (chunks.TryGetValue(cp, out TerrainChunk ch) && ch != null)
-        {
-            for (int x = 0; x <= TerrainChunk.chunkWidth; x += 4)
-                for (int y = 0; y <= TerrainChunk.chunkHeight; y += 4)
-                    for (int z = 0; z <= TerrainChunk.chunkWidth; z += 4)
-                        if (ch.treeStamp[x, y, z] > 0f) return 1;
-        }
-
         float dist = Vector2.Distance(
             new Vector2(player.position.x, player.position.z),
             new Vector2(cp.x, cp.z));
@@ -103,16 +95,18 @@ public class TerrainGenerator : MonoBehaviour
             && Mathf.Abs(cp.z - pz) <= ChunkWorldSize * distInChunks;
     }
 
+    // 
+    // FIX #3: BuildMeshGPU is void  do not await .Task on it
     async void UpdateChunkLOD(ChunkPos cp, TerrainChunk chunk)
     {
         if (chunk == null || !chunk.gameObject.activeSelf) return;
         int newLOD = GetLOD(cp);
         if (newLOD == chunk.currentLOD) return;
         chunk.currentLOD = newLOD;
-
-        await chunk.BuildMeshGPU(IsNearPlayer(cp, colliderDist)).Task;
+        await chunk.BuildMeshAsync(IsNearPlayer(cp, colliderDist));
     }
 
+    // 
     void SpawnPlayerOnSurface()
     {
         Vector3 rayStart = new Vector3(player.position.x, 9999f, player.position.z);
@@ -124,6 +118,7 @@ public class TerrainGenerator : MonoBehaviour
                 player.position.z);
     }
 
+    // 
     void BuildChunkImmediate(int xPos, int zPos)
     {
         TerrainChunk chunk;
@@ -147,6 +142,7 @@ public class TerrainGenerator : MonoBehaviour
         chunks.Add(new ChunkPos(xPos, zPos), chunk);
     }
 
+    // 
     async Task BuildChunkAsync(int xPos, int zPos)
     {
         ChunkPos cp = new ChunkPos(xPos, zPos);
@@ -173,11 +169,7 @@ public class TerrainGenerator : MonoBehaviour
         chunks.Add(cp, chunk);
 
         Vector3 chunkOrigin = chunk.transform.position;
-
-        await Task.Run(() =>
-        {
-            chunk.GenerateDensity(chunkOrigin);
-        });
+        await Task.Run(() => chunk.GenerateDensity(chunkOrigin));
 
         if (chunk == null || !chunk.gameObject.activeSelf)
         {
@@ -198,6 +190,7 @@ public class TerrainGenerator : MonoBehaviour
         building.Remove(cp);
     }
 
+    // 
     async Task BuildNewChunkAsync(int xPos, int zPos)
     {
         if (!chunks.TryGetValue(new ChunkPos(xPos, zPos), out TerrainChunk chunk)) return;
@@ -208,13 +201,13 @@ public class TerrainGenerator : MonoBehaviour
         chunks.TryGetValue(new ChunkPos(xPos + s, zPos + s), out TerrainChunk nxz);
 
         int waited = 0;
-        while (waited < 20)
+        while (waited < 10)
         {
             bool nxReady = nx == null || nx.densityReady;
             bool nzReady = nz == null || nz.densityReady;
             bool nxzReady = nxz == null || nxz.densityReady;
             if (nxReady && nzReady && nxzReady) break;
-            await Task.Delay(50);
+            await Task.Delay(20);
             waited++;
         }
 
@@ -225,12 +218,13 @@ public class TerrainGenerator : MonoBehaviour
         chunk.currentLOD = GetLOD(cp);
         bool needCollider = IsNearPlayer(cp, colliderDist);
 
-        await chunk.BuildMeshGPU(needCollider).Task;
+        await chunk.BuildMeshAsync(needCollider);
 
         WaterChunk wat = chunk.GetComponentInChildren<WaterChunk>();
         if (wat != null) { wat.SetLocs(chunk.densityMap); wat.BuildMesh(); }
     }
 
+    // 
     async Task RebuildNeighbourAsync(int xPos, int zPos)
     {
         if (!chunks.TryGetValue(new ChunkPos(xPos, zPos), out TerrainChunk chunk)) return;
@@ -245,11 +239,14 @@ public class TerrainGenerator : MonoBehaviour
         chunk.SyncBorderTreeStamp(nx, nz, nxz);
 
         ChunkPos cp = new ChunkPos(xPos, zPos);
+        // FIX #7: use needCollider variable instead of calling IsNearPlayer twice
         bool needCollider = IsNearPlayer(cp, colliderDist);
-
         await chunk.BuildMeshAsync(needCollider);
+
+        await Task.CompletedTask; // keeps async signature without spinning
     }
 
+    // 
     ChunkPos curChunk = new ChunkPos(-1, -1);
     void LoadChunks()
     {
@@ -307,12 +304,14 @@ public class TerrainGenerator : MonoBehaviour
             StartCoroutine(DelayBuildChunks());
     }
 
+    // 
     IEnumerator DelayBuildChunks()
     {
         coroutineRunning = true;
         while (toGenerate.Count > 0)
         {
-            if (building.Count < 3)
+            // Drain as many queued chunks as the parallel cap allows each frame
+            while (toGenerate.Count > 0 && building.Count < 6)
             {
                 int batchX = toGenerate[0].x;
                 int batchZ = toGenerate[0].z;
@@ -322,7 +321,6 @@ public class TerrainGenerator : MonoBehaviour
                 BuildChunkAsync(batchX, batchZ);
 #pragma warning restore CS4014
             }
-
             yield return null;
         }
         coroutineRunning = false;

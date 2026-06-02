@@ -2,19 +2,28 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 public class TerrainChunk : MonoBehaviour
 {
+    //  GPU Procedural Draw fields 
+    [HideInInspector] public ComputeBuffer gpuTriangleBuf; // triangle buffer lives on GPU
+    [HideInInspector] public ComputeBuffer gpuArgsBuf;     // DrawProceduralIndirect args
+    [HideInInspector] public int gpuTriCount = 0; // triangle count
+    [HideInInspector] public Material gpuMaterial;    // per-chunk material instance
+
+    //  Chunk dimensions 
     public const int chunkWidth = 24;
     public const int chunkHeight = 48;
     public const int voxelScale = 1;
+    public Shader proceduralShader;
+
     public bool densityReady = false;
     public float[,,] densityMap = new float[chunkWidth + 1, chunkHeight + 1, chunkWidth + 1];
-// 木（tree）の情報を記録する配列。プール再利用時のみリセット。
-public float[,,] treeStamp = new float[chunkWidth + 1, chunkHeight + 1, chunkWidth + 1];
-// treeDensityMap は treeStamp の別名（他クラス互換用）
-public float[,,] treeDensityMap => treeStamp;
 
+    // tree
+    public float[,,] treeStamp = new float[chunkWidth + 1, chunkHeight + 1, chunkWidth + 1];
+    public float[,,] treeDensityMap => treeStamp;
 
     [Header("Marching Cubes")]
     [Range(-1f, 1f)]
@@ -27,7 +36,7 @@ public float[,,] treeDensityMap => treeStamp;
 
     private FastNoise noise = new FastNoise();
 
-    // ─────────────────────────────────────────────────────────────
+    // 
     public void GenerateDensity(Vector3 origin)
     {
         for (int x = 0; x <= chunkWidth; x++)
@@ -39,17 +48,14 @@ public float[,,] treeDensityMap => treeStamp;
                     float worldZ = origin.z + z * voxelScale;
 
                     float simplex1 = noise.GetSimplex(worldX * 0.8f, worldZ * 0.8f) * 10f;
-                    // Clamp modulator to [0, 1.5] so simplex2 never drags terrain below base
                     float modulator = Mathf.Clamp(noise.GetSimplex(worldX * 0.3f, worldZ * 0.3f) + 0.5f, 0f, 1.5f);
                     float simplex2 = noise.GetSimplex(worldX * 3f, worldZ * 3f) * 10f * modulator;
 
-                    // Raise base height so average surface sits well above water
                     float baseLandHeight = (chunkHeight * voxelScale) * 0.55f + simplex1 + simplex2;
                     float density = baseLandHeight - worldY;
 
                     float caveNoise = noise.GetPerlinFractal(worldX * 5f, worldY * 10f, worldZ * 5f);
                     float caveMask = noise.GetSimplex(worldX * 0.3f, worldZ * 0.3f) + 0.3f;
-                    // Only carve caves above a minimum height so the floor never opens up
                     if (worldY > 5f && caveNoise > Mathf.Max(caveMask, 0.2f))
                         density -= 10f;
 
@@ -58,6 +64,7 @@ public float[,,] treeDensityMap => treeStamp;
         densityReady = true;
     }
 
+    // 
     [HideInInspector] public MeshFilter meshFilter;
     [HideInInspector] public MeshCollider meshCollider;
 
@@ -66,7 +73,90 @@ public float[,,] treeDensityMap => treeStamp;
         meshFilter = GetComponent<MeshFilter>();
         meshCollider = GetComponent<MeshCollider>();
     }
-    // ─────────────────────────────────────────────────────────────
+
+    // 
+    public void InitCollider()
+    {
+        MeshCollider col = GetComponent<MeshCollider>();
+        if (col != null) col.sharedMesh = null;
+    }
+
+    // 
+    public void InitGPUBuffers()
+    {
+        gpuMaterial = new Material(proceduralShader);
+
+        // FIX #14: release old buffers before allocating new ones to prevent GPU memory leak
+        ReleaseGPUBuffers();
+
+        // 72 bytes = Triangle struct (6  float3: a, b, c, colorA, colorB, colorC)
+        gpuTriangleBuf = new ComputeBuffer(150000, 72);
+
+        // DrawProceduralIndirect args: [vertexCount, instanceCount, startVertex, startInstance, padding]
+        gpuArgsBuf = new ComputeBuffer(5, sizeof(int), ComputeBufferType.IndirectArguments);
+        gpuArgsBuf.SetData(new int[] { 0, 1, 0, 0, 0 });
+
+        gpuMaterial = new Material(Shader.Find("Custom/TerrainProcedural"));
+        gpuMaterial.SetBuffer("_Triangles", gpuTriangleBuf);
+    }
+
+    public void SetGPUTriCount(int count)
+    {
+        gpuTriCount = count;
+        // vertex count = triangles  3
+        gpuArgsBuf.SetData(new int[] { count * 3, 1, 0, 0, 0 });
+    }
+
+    public void ReleaseGPUBuffers()
+    {
+        gpuTriangleBuf?.Release(); gpuTriangleBuf = null;
+        gpuArgsBuf?.Release(); gpuArgsBuf = null;
+        gpuTriCount = 0;
+    }
+
+    void OnDestroy() => ReleaseGPUBuffers();
+
+    // 
+    // FIX #14: ResetForReuse releases GPU buffers so InitGPUBuffers can reallocate cleanly
+    public void ResetForReuse()
+    {
+        densityReady = false;
+        System.Array.Clear(treeStamp, 0, treeStamp.Length);
+        System.Array.Clear(_flatDensity, 0, _flatDensity.Length);
+        System.Array.Clear(_flatTreeStamp, 0, _flatTreeStamp.Length);
+        ReleaseGPUBuffers();
+    }
+
+    // 
+    // FIX #11: BakeColliderAsync moved OUT of ApplyMesh as a proper class-level IEnumerator
+    IEnumerator BakeColliderAsync(Mesh mesh)
+    {
+        int meshID = mesh.GetInstanceID();
+        bool bakeDone = false;
+
+        // FIX #10: actually wait for bake to finish before assigning
+        Task.Run(() =>
+        {
+            Physics.BakeMesh(meshID, false);
+            bakeDone = true;
+        });
+
+        // Wait until the thread pool task sets bakeDone = true
+        yield return new WaitUntil(() => bakeDone);
+
+        // One extra frame so Unity registers the baked data
+        yield return null;
+
+        if (this == null || !gameObject.activeSelf) yield break;
+        var col = GetComponent<MeshCollider>();
+        if (col != null)
+        {
+            col.cookingOptions = MeshColliderCookingOptions.CookForFasterSimulation;
+            col.sharedMesh = mesh;
+        }
+    }
+
+    // 
     public static Vector3[] ComputeNormals(Vector3[] verts, int[] tris)
     {
         Vector3[] normals = new Vector3[verts.Length];
@@ -82,13 +172,8 @@ public float[,,] treeDensityMap => treeStamp;
             normals[i] = normals[i].normalized;
         return normals;
     }
-    public void InitCollider()
-    {
-        MeshCollider col = GetComponent<MeshCollider>();
-        if (col != null) col.sharedMesh = null;
-    }
 
-    // ─────────────────────────────────────────────────────────────
+    // 
     public void SyncBorderDensity(TerrainChunk neighborX, TerrainChunk neighborZ, TerrainChunk neighborXZ)
     {
         if (neighborX != null)
@@ -106,23 +191,159 @@ public float[,,] treeDensityMap => treeStamp;
                 densityMap[chunkWidth, y, chunkWidth] = neighborXZ.densityMap[0, y, 0];
     }
 
-    // ─────────────────────────────────────────────────────────────
-    public void BuildMesh(bool updateCollider = true)
+    public void SyncBorderTreeStamp(TerrainChunk neighborX, TerrainChunk neighborZ, TerrainChunk neighborXZ)
     {
-        // Debug: Check treeStamp marker spread before mesh build
-        float minT = float.MaxValue, maxT = float.MinValue;
-        int cntNonZero = 0;
-        for (int x = 0; x <= chunkWidth; x++)
+        if (neighborX != null)
             for (int y = 0; y <= chunkHeight; y++)
                 for (int z = 0; z <= chunkWidth; z++)
-                {
-                    float v = treeDensityMap[x, y, z];
-                    if (v != 0) cntNonZero++;
-                    if (v < minT) minT = v;
-                    if (v > maxT) maxT = v;
-                }
-        var posStr = transform != null ? transform.position.ToString() : "null";
-        
+                    treeStamp[chunkWidth, y, z] = Mathf.Max(treeStamp[chunkWidth, y, z],
+                        neighborX.treeStamp[0, y, z]);
+
+        if (neighborZ != null)
+            for (int y = 0; y <= chunkHeight; y++)
+                for (int x = 0; x <= chunkWidth; x++)
+                    treeStamp[x, y, chunkWidth] = Mathf.Max(treeStamp[x, y, chunkWidth],
+                        neighborZ.treeStamp[x, y, 0]);
+
+        if (neighborXZ != null)
+            for (int y = 0; y <= chunkHeight; y++)
+                treeStamp[chunkWidth, y, chunkWidth] = Mathf.Max(
+                    treeStamp[chunkWidth, y, chunkWidth],
+                    neighborXZ.treeStamp[0, y, 0]);
+    }
+
+    // 
+    // Flat arrays reused across frames  no alloc per build
+    float[] _flatDensity = new float[(chunkWidth + 1) * (chunkHeight + 1) * (chunkWidth + 1)];
+    float[] _flatTreeStamp = new float[(chunkWidth + 1) * (chunkHeight + 1) * (chunkWidth + 1)];
+
+    public float[] FlattenDensity()
+    {
+        int W = chunkWidth + 1, H = chunkHeight + 1;
+        for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+                for (int z = 0; z < W; z++)
+                    _flatDensity[x * H * W + y * W + z] = densityMap[x, y, z];
+        return _flatDensity;
+    }
+
+    public float[] FlattenTreeStamp()
+    {
+        int W = chunkWidth + 1, H = chunkHeight + 1;
+        for (int x = 0; x < W; x++)
+            for (int y = 0; y < H; y++)
+                for (int z = 0; z < W; z++)
+                    _flatTreeStamp[x * H * W + y * W + z] = treeStamp[x, y, z];
+        return _flatTreeStamp;
+    }
+
+    // 
+    // Every frame: draw the GPU triangle buffer directly  no Mesh object involved
+    void Update()
+    {
+        if (gpuTriCount <= 0 || gpuMaterial == null || gpuTriangleBuf == null) return;
+
+        Graphics.DrawProceduralIndirect(
+            gpuMaterial,
+            new Bounds(transform.position + Vector3.up * chunkHeight * 0.5f,
+                       Vector3.one * chunkWidth * 2f),
+            MeshTopology.Triangles,
+            gpuArgsBuf);
+    }
+
+    // 
+    // BuildMeshGPU: dispatches compute shader, stores count, optionally bakes collider
+    public void BuildMeshGPU(bool updateCollider = true)
+    {
+        if (GPUMarchDispatcher.Instance == null)
+        {
+            Debug.LogWarning("[TerrainChunk] GPUMarchDispatcher not ready, skipping BuildMeshGPU");
+            return;
+        }
+        if (gpuTriangleBuf == null) InitGPUBuffers();
+
+        float[] flatDensity = FlattenDensity();
+        float[] flatTree = FlattenTreeStamp();
+
+        GPUMarchDispatcher.Instance.DispatchAsync(
+            flatDensity, flatTree,
+            isoLevel, chunkWidth, chunkHeight, voxelScale, currentLOD,
+            (triCount) =>
+            {
+                if (this == null || !gameObject.activeSelf) return;
+                SetGPUTriCount(triCount);
+
+                if (updateCollider)
+                    StartCoroutine(BakeColliderFromGPU());
+            });
+    }
+
+    // 
+    // Reads back only triangle data needed for physics  runs after GPU render
+    IEnumerator BakeColliderFromGPU()
+    {
+        yield return new WaitForEndOfFrame();
+
+        bool readbackDone = false;
+        Mesh colliderMesh = null;
+
+        int snapCount = gpuTriCount; // snapshot before async gap
+        var dispatcher = GPUMarchDispatcher.Instance;
+        if (dispatcher == null) { readbackDone = true; yield break; }
+        AsyncGPUReadback.Request(dispatcher.TriangleBuf, snapCount * 72, 0, (req) =>
+        {
+            if (req.hasError || this == null) { readbackDone = true; return; }
+
+            var raw = req.GetData<GpuTriangle>();
+            int triCount = raw.Length; // use actual slice length, not the (possibly stale) field
+            var verts = new Vector3[triCount * 3];
+            var tris = new int[triCount * 3];
+
+            for (int i = 0; i < triCount; i++)
+            {
+                verts[i * 3] = raw[i].a;
+                verts[i * 3 + 1] = raw[i].b;
+                verts[i * 3 + 2] = raw[i].c;
+                tris[i * 3] = i * 3;
+                tris[i * 3 + 1] = i * 3 + 1;
+                tris[i * 3 + 2] = i * 3 + 2;
+            }
+
+            colliderMesh = new Mesh();
+            colliderMesh.indexFormat = IndexFormat.UInt32;
+            colliderMesh.vertices = verts;
+            colliderMesh.triangles = tris;
+            readbackDone = true;
+        });
+
+        yield return new WaitUntil(() => readbackDone);
+
+        if (colliderMesh != null)
+            yield return StartCoroutine(BakeColliderAsync(colliderMesh));
+    }
+
+    // FIX #12: removed .ContinueWith(TaskScheduler.FromCurrentSynchronizationContext())
+    // which can be null in Unity  BakeColliderAsync handles assignment safely on main thread
+    IEnumerator AssignCollider(Mesh mesh)
+    {
+        yield return null;
+        yield return null;
+        if (this == null || !gameObject.activeSelf) yield break;
+        var col = GetComponent<MeshCollider>();
+        if (col != null)
+        {
+            col.cookingOptions = MeshColliderCookingOptions.CookForFasterSimulation;
+            col.sharedMesh = mesh;
+        }
+    }
+
+    // Blittable struct matching the compute shader Triangle layout (6  float3 = 72 bytes)
+    struct GpuTriangle { public Vector3 a, b, c, colorA, colorB, colorC; }
+
+    // 
+    // Legacy CPU mesh path  still used by Start() for initial world build
+    public void BuildMesh(bool updateCollider = true)
+    {
         var verts = new List<Vector3>();
         var tris = new List<int>();
         var colors = new List<Color>();
@@ -142,22 +363,7 @@ public float[,,] treeDensityMap => treeStamp;
 
     public async Task BuildMeshAsync(bool updateCollider = true, float[,,] treeSnap = null)
     {
-        float minT = float.MaxValue, maxT = float.MinValue;
-        int cntNonZero = 0;
-        for (int x = 0; x <= chunkWidth; x++)
-            for (int y = 0; y <= chunkHeight; y++)
-                for (int z = 0; z <= chunkWidth; z++)
-                {
-                    float v = treeDensityMap[x, y, z];
-                    if (v != 0) cntNonZero++;
-                    if (v < minT) minT = v;
-                    if (v > maxT) maxT = v;
-                }
-        var posStr = transform != null ? transform.position.ToString() : "null";
-        
-        // Capture both maps on the main thread before going async
         float[,,] densitySnap = (float[,,])densityMap.Clone();
-        // treeSnap param kept for API compatibility but treeStamp is the source of truth
         float[,,] treeRead = (float[,,])treeStamp.Clone();
         float iso = isoLevel;
         int s = voxelScale;
@@ -174,7 +380,7 @@ public float[,,] treeDensityMap => treeStamp;
                 for (int y = 0; y < chunkHeight; y += step)
                     for (int z = 0; z < chunkWidth; z += step)
                         MarchCubeStatic(new Vector3Int(x, y, z), verts, tris, colors,
-                                        step, densitySnap, treeRead, iso, s);
+                            step, densitySnap, treeRead, iso, s);
 
             if (verts.Count > 0)
                 normals = ComputeNormals(verts.ToArray(), tris.ToArray());
@@ -184,9 +390,9 @@ public float[,,] treeDensityMap => treeStamp;
         ApplyMesh(verts, tris, colors, normals, updateCollider);
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // 
     public void ApplyMesh(List<Vector3> verts, List<int> tris, List<Color> colors,
-                          Vector3[] normals, bool updateCollider, Mesh prebuiltMesh = null)
+        Vector3[] normals, bool updateCollider, Mesh prebuiltMesh = null)
     {
         if (verts.Count == 0) return;
 
@@ -194,7 +400,7 @@ public float[,,] treeDensityMap => treeStamp;
         if (finalMesh == null)
         {
             finalMesh = new Mesh();
-            finalMesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            finalMesh.indexFormat = IndexFormat.UInt32;
             finalMesh.vertices = verts.ToArray();
             finalMesh.triangles = tris.ToArray();
             finalMesh.colors = colors.ToArray();
@@ -209,38 +415,19 @@ public float[,,] treeDensityMap => treeStamp;
 
         if (updateCollider)
             StartCoroutine(BakeColliderAsync(finalMesh));
-
-        IEnumerator BakeColliderAsync(Mesh mesh)
-        {
-            int meshID = mesh.GetInstanceID();
-            // BakeMesh runs on a thread pool thread — zero main thread cost
-            yield return new WaitUntil(() =>
-            {
-                System.Threading.Tasks.Task.Run(() => Physics.BakeMesh(meshID, false));
-                return true;
-            });
-            yield return null; // wait one frame for bake to finish
-            yield return null;
-            var col = GetComponent<MeshCollider>();
-            if (col != null && this != null && gameObject.activeSelf)
-            {
-                col.cookingOptions = MeshColliderCookingOptions.CookForFasterSimulation;
-                col.sharedMesh = mesh;
-            }
-        }
     }
 
-    // ─────────────────────────────────────────────────────────────
+    // 
     public void MarchCube(Vector3Int coord, List<Vector3> verts, List<int> tris, List<Color> colors, int step = 1)
     {
         MarchCubeStatic(coord, verts, tris, colors, step, densityMap, treeDensityMap, isoLevel, voxelScale);
     }
 
     public static void MarchCubeStatic(Vector3Int coord,
-                                        List<Vector3> verts, List<int> tris, List<Color> colors,
-                                        int step,
-                                        float[,,] densityMap, float[,,] treeDensityMap,
-                                        float isoLevel, int s)
+        List<Vector3> verts, List<int> tris, List<Color> colors,
+        int step,
+        float[,,] densityMap, float[,,] treeDensityMap,
+        float isoLevel, int s)
     {
         int x = coord.x, y = coord.y, z = coord.z;
         if (x + step > chunkWidth || y + step > chunkHeight || z + step > chunkWidth) return;
@@ -271,7 +458,6 @@ public float[,,] treeDensityMap => treeStamp;
         tMax = Mathf.Max(tMax, treeDensityMap[x + step, y + step, z]);
         tMax = Mathf.Max(tMax, treeDensityMap[x + step, y + step, z + step]);
         tMax = Mathf.Max(tMax, treeDensityMap[x, y + step, z + step]);
-
 
         Color vertColor = tMax >= 1.5f ? new Color(0, 1, 0)
                         : tMax >= 0.5f ? new Color(1, 0, 0)
@@ -313,99 +499,4 @@ public float[,,] treeDensityMap => treeStamp;
         float t = (iso - dA) / (dB - dA);
         return pA + t * (pB - pA);
     }
-
-    public void SyncBorderTreeStamp(TerrainChunk neighborX, TerrainChunk neighborZ, TerrainChunk neighborXZ)
-    {
-        if (neighborX != null)
-            for (int y = 0; y <= chunkHeight; y++)
-                for (int z = 0; z <= chunkWidth; z++)
-                    treeStamp[chunkWidth, y, z] = Mathf.Max(treeStamp[chunkWidth, y, z],
-                                                             neighborX.treeStamp[0, y, z]);
-
-        if (neighborZ != null)
-            for (int y = 0; y <= chunkHeight; y++)
-                for (int x = 0; x <= chunkWidth; x++)
-                    treeStamp[x, y, chunkWidth] = Mathf.Max(treeStamp[x, y, chunkWidth],
-                                                             neighborZ.treeStamp[x, y, 0]);
-
-        if (neighborXZ != null)
-            for (int y = 0; y <= chunkHeight; y++)
-                treeStamp[chunkWidth, y, chunkWidth] = Mathf.Max(
-                    treeStamp[chunkWidth, y, chunkWidth],
-                    neighborXZ.treeStamp[0, y, 0]);
-    }
-
-    float[] _flatDensity = new float[(chunkWidth + 1) * (chunkHeight + 1) * (chunkWidth + 1)];
-    float[] _flatTreeStamp = new float[(chunkWidth + 1) * (chunkHeight + 1) * (chunkWidth + 1)];
-    // Flattens the 3D densityMap to a 1D array the compute shader can read.
-    // Layout: index = x*(H+1)*(W+1) + y*(W+1) + z
-    public float[] FlattenDensity()
-    {
-        int W = chunkWidth + 1, H = chunkHeight + 1;
-        for (int x = 0; x < W; x++)
-            for (int y = 0; y < H; y++)
-                for (int z = 0; z < W; z++)
-                    _flatDensity[x * H * W + y * W + z] = densityMap[x, y, z];
-        return _flatDensity; // returns reference, no alloc
-    }
-
-    public float[] FlattenTreeStamp()
-    {
-        int W = chunkWidth + 1, H = chunkHeight + 1;
-        for (int x = 0; x < W; x++)
-            for (int y = 0; y < H; y++)
-                for (int z = 0; z < W; z++)
-                    _flatTreeStamp[x * H * W + y * W + z] = treeStamp[x, y, z];
-        return _flatTreeStamp;
-    }
-
-    // Also clear them in ResetForReuse():
-    public void ResetForReuse()
-    {
-        densityReady = false;
-        System.Array.Clear(treeStamp, 0, treeStamp.Length);
-        System.Array.Clear(_flatDensity, 0, _flatDensity.Length);
-        System.Array.Clear(_flatTreeStamp, 0, _flatTreeStamp.Length);
-       
-    }
-    public System.Threading.Tasks.TaskCompletionSource<bool> BuildMeshGPU(bool updateCollider = true)
-    {
-        var tcs = new System.Threading.Tasks.TaskCompletionSource<bool>();
-
-        float[] flatDensity = FlattenDensity();
-        float[] flatTree = FlattenTreeStamp();
-
-        GPUMarchDispatcher.Instance.DispatchAsync(
-            flatDensity, flatTree,
-            isoLevel, chunkWidth, chunkHeight, voxelScale, currentLOD,
-            (meshData) =>
-            {
-                if (this == null || !gameObject.activeSelf)
-                { tcs.TrySetResult(false); return; }
-
-                if (meshData == null)
-                {
-                    GetComponent<MeshFilter>().mesh = null;
-                    if (updateCollider)
-                    {
-                        var col = GetComponent<MeshCollider>();
-                        if (col != null) col.sharedMesh = null;
-                    }
-                    tcs.TrySetResult(true);
-                    return;
-                }
-
-                ApplyMesh(
-                    new System.Collections.Generic.List<Vector3>(meshData.verts),
-                    new System.Collections.Generic.List<int>(meshData.tris),
-                    new System.Collections.Generic.List<Color>(meshData.colors),
-                    meshData.normals,
-                    updateCollider);
-
-                tcs.TrySetResult(true);
-            });
-
-        return tcs;
-    }
-
-} 
+}
