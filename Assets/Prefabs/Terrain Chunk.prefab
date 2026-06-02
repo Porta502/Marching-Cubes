@@ -98,8 +98,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d3340f3af547c93449467da52ccf2641, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  gpuTriCount: 0
+  gpuMaterial: {fileID: 0}
+  proceduralShader: {fileID: 4800000, guid: 90a7e8364bccd1047b528b5ae316be62, type: 3}
+  densityReady: 0
   isoLevel: 0
+  currentLOD: 1
   terrainMaterial: {fileID: 2100000, guid: 57ae17cbb73aceb4babaace866637436, type: 2}
+  meshFilter: {fileID: 0}
+  meshCollider: {fileID: 0}
 --- !u!64 &8747925763076863679
 MeshCollider:
   m_ObjectHideFlags: 0
