@@ -8,6 +8,17 @@ public class TerrainChunk : MonoBehaviour
 {
     //  GPU Procedural Draw fields 
     [HideInInspector] public ComputeBuffer gpuTriangleBuf; // triangle buffer lives on GPU
+    // Pending mesh upload — enqueued after async marching cubes, applied by TerrainGenerator
+    public struct MeshUpload
+    {
+        public TerrainChunk chunk;
+        public List<Vector3> verts;
+        public List<int> tris;
+        public List<Color> colors;
+        public Vector3[] normals;
+        public bool updateCollider;
+    }
+
     [HideInInspector] public ComputeBuffer gpuArgsBuf;     // DrawProceduralIndirect args
     [HideInInspector] public int gpuTriCount = 0; // triangle count
     [HideInInspector] public Material gpuMaterial;    // per-chunk material instance
@@ -16,7 +27,6 @@ public class TerrainChunk : MonoBehaviour
     public const int chunkWidth = 24;
     public const int chunkHeight = 48;
     public const int voxelScale = 1;
-    public Shader proceduralShader;
 
     public bool densityReady = false;
     public float[,,] densityMap = new float[chunkWidth + 1, chunkHeight + 1, chunkWidth + 1];
@@ -84,8 +94,6 @@ public class TerrainChunk : MonoBehaviour
     // 
     public void InitGPUBuffers()
     {
-        gpuMaterial = new Material(proceduralShader);
-
         // FIX #14: release old buffers before allocating new ones to prevent GPU memory leak
         ReleaseGPUBuffers();
 
@@ -96,7 +104,18 @@ public class TerrainChunk : MonoBehaviour
         gpuArgsBuf = new ComputeBuffer(5, sizeof(int), ComputeBufferType.IndirectArguments);
         gpuArgsBuf.SetData(new int[] { 0, 1, 0, 0, 0 });
 
-        gpuMaterial = new Material(Shader.Find("Custom/TerrainProcedural"));
+        // Assign via Inspector if possible; fall back to Shader.Find
+        if (gpuMaterial == null)
+        {
+            var shader = Shader.Find("Custom/TerrainShader");
+            if (shader == null)
+            {
+                Debug.LogError("[TerrainChunk] Shader 'Custom/TerrainProcedural' not found. " +
+                    "Assign terrainMaterial in the Inspector or check the shader name.");
+                return;
+            }
+            gpuMaterial = new Material(shader);
+        }
         gpuMaterial.SetBuffer("_Triangles", gpuTriangleBuf);
     }
 
@@ -387,7 +406,18 @@ public class TerrainChunk : MonoBehaviour
         });
 
         if (this == null || gameObject == null || !gameObject.activeSelf) return;
-        ApplyMesh(verts, tris, colors, normals, updateCollider);
+
+        // Enqueue for rate-limited upload instead of applying immediately
+        var upload = new MeshUpload
+        {
+            chunk = this,
+            verts = verts,
+            tris = tris,
+            colors = colors,
+            normals = normals,
+            updateCollider = updateCollider
+        };
+        TerrainGenerator.EnqueueMeshUpload(upload);
     }
 
     // 
