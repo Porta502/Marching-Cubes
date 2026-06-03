@@ -20,6 +20,13 @@ public class TerrainGenerator : MonoBehaviour
     HashSet<ChunkPos> building = new HashSet<ChunkPos>();
     bool coroutineRunning = false;
 
+    // Rate-limited mesh upload queue — drained at most 2 per frame to avoid spikes
+    static readonly Queue<TerrainChunk.MeshUpload> _uploadQueue =
+        new Queue<TerrainChunk.MeshUpload>();
+
+    public static void EnqueueMeshUpload(TerrainChunk.MeshUpload upload)
+        => _uploadQueue.Enqueue(upload);
+
     static int ChunkWorldSize => TerrainChunk.chunkWidth * TerrainChunk.voxelScale;
 
     // 
@@ -61,6 +68,16 @@ public class TerrainGenerator : MonoBehaviour
 
     void Update()
     {
+        // Drain upload queue — max 1 mesh uploads per frame to prevent spikes
+        int uploads = 0;
+        while (_uploadQueue.Count > 0 && uploads < 1)
+        {
+            var u = _uploadQueue.Dequeue();
+            if (u.chunk != null && u.chunk.gameObject.activeSelf)
+                u.chunk.ApplyMesh(u.verts, u.tris, u.colors, u.normals, u.updateCollider);
+            uploads++;
+        }
+
         LoadChunks();
 
         lodTimer += Time.deltaTime;
