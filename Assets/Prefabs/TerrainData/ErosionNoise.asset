@@ -1,0 +1,81 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b5a55167b9f07403db285acd197bbc09, type: 3}
+  m_Name: ErosionNoise
+  m_EditorClassIdentifier: 
+  noiseScale: 5000
+  octaves: 4
+  persistance: 0.25
+  lacunarity: 2
+  seedOffset: 6
+  interpolation:
+    value:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0.99763906
+        inSlope: 0.000026290481
+        outSlope: 0.000026290481
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0.15416667
+      - serializedVersion: 3
+        time: 0.1099979
+        value: 0.82952714
+        inSlope: -0.39455047
+        outSlope: -0.39455047
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 1
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 0.2635801
+        value: 0.2695613
+        inSlope: -0.27640626
+        outSlope: -0.27640626
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 1
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 0.6138617
+        value: 0.09084884
+        inSlope: -0.07691864
+        outSlope: -0.07691864
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.41545522
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 0.85041577
+        value: 0.035837177
+        inSlope: -0.13081393
+        outSlope: -0.13081393
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0.6831316
+        outWeight: 0.33333334
+      - serializedVersion: 3
+        time: 1
+        value: 0
+        inSlope: -0.23957857
+        outSlope: -0.23957857
+        tangentMode: 34
+        weightedMode: 0
+        inWeight: 0.33333334
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    isDirty: 0
