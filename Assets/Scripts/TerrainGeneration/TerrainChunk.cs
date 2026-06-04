@@ -160,13 +160,14 @@ public class TerrainChunk : ChunkData
 #endif
     }
 
-    public void RecalculateChunkImmediate(int offset, ref NativeArray<CPUDensityManager.MapData> mapData){
-        if(!active) return;
-        LODMeshHandle.SetChunkData(0, offset, mapData, () =>{
-            LODMeshHandle.CreateMesh(0, onChunkCreated);
+    public void RecalculateChunkImmediate(int offset, ref NativeArray<CPUDensityManager.MapData> mapData)
+    {
+        if (!active) return;
+        LODMeshHandle.SetChunkData(0, offset, mapData, () => {
+            prevMeshLOD = int.MaxValue; // force onMapGenerated to think LOD changed
+            onMapGenerated();           // go through normal mesh pipeline
         });
     }
-
     private void ClearFilter(){ meshFilter.sharedMesh = null; }
 
 }

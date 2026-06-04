@@ -19,6 +19,7 @@ public class TerraformController
     private TerraformSettings settings;
     public LayerMask objectLayer;
     private bool shiftPressed = false;
+    private bool isTerraforming = false;
 
     int IsoLevel;
 
@@ -67,38 +68,53 @@ public class TerraformController
     bool RayTestSolid(CPUDensityManager.MapData pointInfo){ return (pointInfo.density * (pointInfo.viscosity / 255.0f)) >= IsoLevel; }
     bool RayTestLiquid(CPUDensityManager.MapData pointInfo){ return (pointInfo.density * (1 - (pointInfo.viscosity / 255.0f))) >= IsoLevel || (pointInfo.density * (pointInfo.viscosity / 255.0f)) >= IsoLevel;}
 
+
+    private float rebuildTimer = 0f;
+    private float rebuildInterval = 0.05f; // rebuild 10 times per second max
+
     void Terraform()
     {
         if (cam == null) cam = Camera.main?.transform;
-        if (cam == null) return; 
+        if (cam == null) return;
 
         float3 camPosGC = CPUDensityManager.WSToGS(cam.position);
-        if(Input.GetMouseButtonUp(1) || Input.GetMouseButtonUp(0)) MainInventory.ClearSmallMaterials(settings.minInvMatThresh);
-        else if (Input.GetMouseButton(1)) //Don't add if there is an object in the way
+        rebuildTimer -= Time.deltaTime;
+
+        if (Input.GetMouseButtonUp(1) || Input.GetMouseButtonUp(0))
         {
-            if(MainInventory.selected.isSolid){
-                if(CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestSolid, out hitPoint))
-                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddSolid);
-            } else{ 
-                if(CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestLiquid, out hitPoint))
-                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddLiquid);
+            MainInventory.ClearSmallMaterials(settings.minInvMatThresh);
+            rebuildTimer = 0f; // force rebuild on release
+        }
+        else if (Input.GetMouseButton(1))
+        {
+            if (MainInventory.selected.isSolid)
+            {
+                if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestSolid, out hitPoint))
+                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddSolid); rebuildTimer = rebuildInterval; }
+            }
+            else
+            {
+                if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestLiquid, out hitPoint))
+                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddLiquid); rebuildTimer = rebuildInterval; }
             }
         }
-        // Subtract terrain
         else if (Input.GetMouseButton(0))
         {
-            if(shiftPressed) {
-                if(CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestLiquid, out hitPoint))
-                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveLiquid);
-            }else {
-                if(CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestSolid, out hitPoint))
-                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveSolid);
+            if (shiftPressed)
+            {
+                if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestLiquid, out hitPoint))
+                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveLiquid); rebuildTimer = rebuildInterval; }
+            }
+            else
+            {
+                if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestSolid, out hitPoint))
+                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveSolid); rebuildTimer = rebuildInterval; }
             }
         }
-        else return; 
-        barController.OnInventoryChanged(this);
-    }
+        else return;
 
+        barController?.OnInventoryChanged(this);
+    }
     int GetStaggeredDelta(int baseDensity, float deltaDensity){
         int staggeredDelta = Mathf.FloorToInt(deltaDensity);
         staggeredDelta += (deltaDensity % 1) == 0 ? 0 : (Time.frameCount % Mathf.CeilToInt(1 / (deltaDensity % 1))) == 0 ? 1 : 0;

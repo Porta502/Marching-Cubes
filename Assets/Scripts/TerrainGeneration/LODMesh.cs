@@ -86,9 +86,10 @@ public struct LODMesh
         callback?.Invoke();
     }
 
-    public void CreateMesh(int LOD, Action<AsyncMeshReadback.SharedMeshInfo> UpdateCallback = null){
+    public void CreateMesh(int LOD, Action<AsyncMeshReadback.SharedMeshInfo> UpdateCallback = null, bool clearFirst = true)
+    {
         meshCreator.GenerateMapData(this.terrainChunk.CCoord, IsoLevel, LOD, mapChunkSize);
-        clearMesh();
+        if (clearFirst) clearMesh();
 
         DensityGenerator.GeoGenOffsets bufferOffsets = DensityGenerator.bufferOffsets;
         meshReadback.OffloadVerticesToGPU(bufferOffsets);
@@ -103,7 +104,6 @@ public struct LODMesh
 
         meshCreator.ReleaseTempBuffers();
     }
-
     public void SetChunkData(int LOD, int offset, NativeArray<CPUDensityManager.MapData> mapData, Action callback = null){
         meshCreator.SetMapInfo(LOD, mapChunkSize, offset, ref mapData);
         GPUDensityManager.SubscribeChunk(this.terrainChunk.CCoord, LOD, UtilityBuffers.TransferBuffer, true);
