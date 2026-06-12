@@ -1,0 +1,47 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 040870a578bbf46179e139dc5e722edf, type: 3}
+  m_Name: TextureRef
+  m_EditorClassIdentifier: 
+  MaterialDictionary:
+    value:
+    - value: {fileID: 11400000, guid: e241281622587414ea0366319f4b389a, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 6beb6e35811a241549e8cf648024d02f, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 76e5d482c0c8542f3a11248f3dbc0581, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 770b7b57cc5fd44a5b48aa4a63b86229, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 7366b567971cc41fd870194bd88913c8, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 78d8ca816d38b44af9fbcbf451289ef8, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: d506e071805fe4402ad951fce277f5d8, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 07449c87023a44e26891a2231b9cbe6d, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 850f75f6d316949d7846383e92f0c696, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 8e0a46373a2254653ac6cc138422e6e8, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: 4ab47666dc4344741af896a94b8a21a2, type: 2}
+      isDirty: 0
+    - value: {fileID: 11400000, guid: a50bee4c550af4cab99279d7ae99c25c, type: 2}
+      isDirty: 0
+    isDirty: 0
+  liquidFineWave:
+    value: {fileID: 2800000, guid: 0a658634b9a994b12b7ee75cb511ac02, type: 3}
+    isDirty: 0
+  liquidCoarseWave:
+    value: {fileID: 2800000, guid: 03ddc5285c7f24a009c3eff5304abb4e, type: 3}
+    isDirty: 0

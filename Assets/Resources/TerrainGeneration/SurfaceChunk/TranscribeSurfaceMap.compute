@@ -1,0 +1,31 @@
+#pragma kernel CSMain
+const static uint numthread = 128;
+
+struct surfData{
+    float terrain;
+    float squash;
+    int biome;
+    float cFreq;
+    float cSize;
+    float cShape;
+};
+
+StructuredBuffer<surfData> SurfaceMap;
+
+uint numSurfacePoints;
+
+RWStructuredBuffer<surfData> _MemoryBuffer;
+StructuredBuffer<uint2> _AddressDict;
+uint addressIndex;
+
+[numthreads(numthread,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= numSurfacePoints)
+        return;
+    
+    uint pointAddress = _AddressDict[addressIndex].y + id.x;
+    surfData data = SurfaceMap[id.x];
+
+    _MemoryBuffer[pointAddress] =  SurfaceMap[id.x];
+}

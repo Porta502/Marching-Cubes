@@ -1,0 +1,63 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+const static int numThreads = 256;
+
+struct matTerrain{
+    float4 baseColor;
+    float baseTextureScale;
+    float baseColorStrength;
+    int geoShaderInd;
+};
+
+struct vertex{
+    float3 tri;
+    float3 norm;
+    int2 material; 
+};
+
+struct pInfo{
+    uint axis[3];
+};
+
+StructuredBuffer<matTerrain> _MatTerrainData;
+
+StructuredBuffer<vertex> vertices;
+StructuredBuffer<pInfo> triangles;
+StructuredBuffer<uint2> _AddressDict;
+uint vertAddress;
+uint triAddress;
+
+StructuredBuffer<uint> counter;
+StructuredBuffer<uint> triangleIndexOffset;
+StructuredBuffer<uint> shaderPrefix;
+uint bSTART_scount;
+uint bSTART_tri;
+uint bCOUNTER_base;
+
+RWStructuredBuffer<uint> filteredGeometry;
+uint bSTART_sort;
+
+[numthreads(numThreads,1,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= counter[bCOUNTER_base])
+        return;
+
+    uint shaderIndex = asuint(-1);
+    pInfo vIndex = triangles[_AddressDict[triAddress].y + id.x];
+    [unroll] for(uint i = 0; i < 3; i++) {
+        int material = vertices[_AddressDict[vertAddress].y + vIndex.axis[i]].material.x; // Only consider solid material
+        shaderIndex = min(shaderIndex, asuint(_MatTerrainData[material].geoShaderInd));
+    }
+
+    if(shaderIndex == asuint(-1)) 
+        return;
+
+    uint shaderOffset = shaderPrefix[bSTART_scount + shaderIndex];
+    uint triangleOffset = triangleIndexOffset[bSTART_tri + id.x];
+    uint offset = shaderOffset + triangleOffset; 
+
+    //Now it's all sorted!!
+    filteredGeometry[bSTART_sort + offset] = id.x;
+}

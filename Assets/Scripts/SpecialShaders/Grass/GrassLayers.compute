@@ -1,0 +1,93 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel Main
+
+const static int numThreads = 256;
+
+
+struct SourceVertex{
+    float3 positionOS;
+    float3 normalOS;
+    int2 material; 
+};
+
+
+struct DrawVertex{
+    float3 positionOS;
+    float3 normalOS;
+    float2 uv;
+};
+
+struct DrawTriangle{
+    DrawVertex vertices[3];
+};
+
+
+StructuredBuffer<SourceVertex> SourceVertices;
+StructuredBuffer<uint3> SourceTriangles;
+StructuredBuffer<uint2> _AddressDict;
+uint vertAddress;
+uint triAddress;
+
+RWStructuredBuffer<uint> counters;
+StructuredBuffer<uint> BaseTriangles;
+RWStructuredBuffer<DrawTriangle> DrawTriangles;
+int bSTART_base;
+int bCOUNT_base;
+int bSTART_oGeo;
+int bCOUNT_oGeo;
+
+float _TotalHeight;
+int _MaxLayers;
+
+DrawVertex MakeBaseDrawVertex(SourceVertex v){
+    DrawVertex o;
+
+    o.normalOS = v.normalOS;
+    o.positionOS = v.positionOS;
+    o.uv = 0;
+
+    return o;
+}
+
+DrawVertex ExtrudeVertex(DrawVertex v, float height){
+    DrawVertex o;
+    o.positionOS = v.positionOS + v.normalOS * (height * _TotalHeight);
+    o.normalOS = v.normalOS;
+
+    o.uv = v.uv;
+    return o;
+}
+
+[numthreads(numThreads, 1, 1)]
+void Main(uint3 id : SV_DispatchThreadID){
+
+    uint startIndex = counters[bCOUNT_base];
+    uint numSourceTriangles = counters[bCOUNT_base+1] - startIndex;
+    if(id.x >= numSourceTriangles)
+        return;
+
+    uint triIndex = BaseTriangles[bSTART_base + startIndex + id.x];
+    uint3 sourceTri = SourceTriangles[_AddressDict[triAddress].y + triIndex];
+
+    DrawVertex inputs[3];
+    inputs[0] = MakeBaseDrawVertex(SourceVertices[_AddressDict[vertAddress].y + sourceTri.x]);
+    inputs[1] = MakeBaseDrawVertex(SourceVertices[_AddressDict[vertAddress].y + sourceTri.y]);
+    inputs[2] = MakeBaseDrawVertex(SourceVertices[_AddressDict[vertAddress].y + sourceTri.z]);
+    
+
+    for(int i = 0; i < _MaxLayers; i++)
+    {
+        float texHeight = (float) i / _MaxLayers;
+        float colorHeight = (float)(i) / (_MaxLayers - 1.0); // Use (float)(colorOffset + i) / (_MaxLayers - 1.0); if topColor priority
+
+        DrawTriangle tri = (DrawTriangle)0;
+        [unroll] for(int p = 0; p < 3; p++){
+            tri.vertices[p] = ExtrudeVertex(inputs[p], texHeight);
+            tri.vertices[p].uv = half2(texHeight, colorHeight); 
+        }
+
+        int appendInd = 0;
+        InterlockedAdd(counters[bCOUNT_oGeo], 1, appendInd);
+        DrawTriangles[bSTART_oGeo + appendInd] = tri;
+    }
+}
