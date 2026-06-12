@@ -2377,7 +2377,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 10302, guid: 0000000000000000f000000000000000, type: 0}
+  - {fileID: 2100000, guid: d8e3aca52678e28489ac5cf1d7552e1a, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -2470,12 +2470,18 @@ MonoBehaviour:
     smooth: 0
     smoothTime: 5
     lockCursor: 1
-  GroundFriction: 0.075
-  runSpeed: 10
+  runSpeed: 20
+  airControl: 0.08
   jumpForce: 8
-  acceleration: 50
   groundStickDist: 0.05
+  coyoteFrames: 8
+  gravityAccel: 4
+  maxFallSpeed: 30
+  normalSmoothing: 0.85
+  velocitySmoothing: 0.7
   active: 0
+  jumping: 0
+  knocked: 0
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

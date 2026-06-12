@@ -23,7 +23,7 @@ MonoBehaviour:
       z: 1
       w: 1
     textureScale: 5
-    baseColorStrength: 0.1
+    baseColorStrength: 1
     GeoShaderIndex: -1
   AtmosphereScatter:
     ScatterCoeffs:

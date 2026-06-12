@@ -23,18 +23,34 @@ MonoBehaviour:
       z: 0.275
       w: 1
     textureScale: 10
-    baseColorStrength: 0.25
+    baseColorStrength: 1
     GeoShaderIndex: -1
   AtmosphereScatter:
-    ScatterCoeffs: {x: 0, y: 0, z: 0}
-    GroundExtinction: {x: 0, y: 0, z: 0}
+    ScatterCoeffs:
+      x: 0
+      y: 0
+      z: 0
+    GroundExtinction:
+      x: 0
+      y: 0
+      z: 0
   liquidData:
-    shallowCol: {x: 0, y: 0, z: 0}
-    deepCol: {x: 0, y: 0, z: 0}
+    shallowCol:
+      x: 0
+      y: 0
+      z: 0
+    deepCol:
+      x: 0
+      y: 0
+      z: 0
     colFalloff: 0
     depthOpacity: 0
     smoothness: 0
     waveBlend: 0
     waveStrength: 0
-    waveScale: {x: 0, y: 0}
-    waveSpeed: {x: 0, y: 0}
+    waveScale:
+      x: 0
+      y: 0
+    waveSpeed:
+      x: 0
+      y: 0

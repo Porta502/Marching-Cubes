@@ -5,6 +5,7 @@ using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 using Utils;
+using static CPUDensityManager;
 using static EndlessTerrain;
 
 public class TerrainChunk : ChunkData
@@ -116,11 +117,14 @@ public class TerrainChunk : ChunkData
 
     private void onChunkCreated(AsyncMeshReadback.SharedMeshInfo meshInfo)
     {
-        meshFilter.sharedMesh = meshInfo.GenerateMesh(UnityEngine.Rendering.IndexFormat.UInt32);;
+        Mesh newMesh = meshInfo.GenerateMesh(UnityEngine.Rendering.IndexFormat.UInt32);
         meshInfo.Release();
+        meshFilter.sharedMesh = newMesh;
+    }
 
-        //BakeMesh(meshInfo.GetSubmesh(0, UnityEngine.Rendering.IndexFormat.UInt32));
-        //I'm proud to say we're no longer relying on Unity's mesh collider
+    private void ClearFilter()
+    {
+        if (!active) meshFilter.sharedMesh = null;
     }
 
     private void BakeMesh(Mesh mesh){
@@ -160,14 +164,23 @@ public class TerrainChunk : ChunkData
 #endif
     }
 
-    public void RecalculateChunkImmediate(int offset, ref NativeArray<CPUDensityManager.MapData> mapData)
+    private bool rebuildPending = false;
+
+    public void RecalculateChunkImmediate(int offset, ref NativeArray<MapData> mapData)
     {
         if (!active) return;
+
         LODMeshHandle.SetChunkData(0, offset, mapData, () => {
-            prevMeshLOD = int.MaxValue; // force onMapGenerated to think LOD changed
-            onMapGenerated();           // go through normal mesh pipeline
+            if (rebuildPending) return; // already one in flight, skip
+            rebuildPending = true;
+            LODMeshHandle.CreateMesh(0, (meshInfo) => {
+                rebuildPending = false;
+                if (meshInfo == null) return;
+                Mesh newMesh = meshInfo.GenerateMesh(UnityEngine.Rendering.IndexFormat.UInt32);
+                meshInfo.Release();
+                meshFilter.sharedMesh = newMesh;
+            });
         });
     }
-    private void ClearFilter(){ meshFilter.sharedMesh = null; }
 
 }

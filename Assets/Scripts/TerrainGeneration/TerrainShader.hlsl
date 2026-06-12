@@ -1,6 +1,10 @@
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
-struct matTerrain{
+int _ToonSteps;
+float _Ambient;
+
+struct matTerrain
+{
     float4 baseColor;
     float baseTextureScale;
     float baseColorStrength;
@@ -16,7 +20,7 @@ struct v2f
     float4 positionCS : SV_POSITION;
     float3 positionWS : TEXCOORD0;
     float3 normalWS : TEXCOORD1;
-    nointerpolation int material: TEXCOORD2; //Materials are definate and can't be interpolated
+    nointerpolation int material : TEXCOORD2;
 };
 
 #ifdef INDIRECT
@@ -58,15 +62,15 @@ struct appdata
 {
     float3 vertex : POSITION;
     float3 normal : NORMAL;
-    int2 material: TEXCOORD0;
+    int2 material : TEXCOORD0;
 };
 
-v2f vert (appdata v)
+v2f vert(appdata v)
 {
-    v2f o = (v2f)0;
+    v2f o = (v2f) 0;
 
     VertexPositionInputs posInputs = GetVertexPositionInputs(v.vertex.xyz);
-	VertexNormalInputs normInputs = GetVertexNormalInputs(v.normal.xyz);
+    VertexNormalInputs normInputs = GetVertexNormalInputs(v.normal.xyz);
 
     o.positionCS = posInputs.positionCS;
     o.positionWS = posInputs.positionWS;
@@ -77,8 +81,8 @@ v2f vert (appdata v)
 
 #endif
 
-
-float3 triplanar(float3 worldPos, float scale, float3 blendAxes, int texInd){
+float3 triplanar(float3 worldPos, float scale, float3 blendAxes, int texInd)
+{
     float3 scaledWorldPos = worldPos / scale;
     
     float3 xProjection = _Textures.Sample(sampler_Textures, float3(scaledWorldPos.y, scaledWorldPos.z, texInd)).xyz * blendAxes.x;
@@ -88,28 +92,21 @@ float3 triplanar(float3 worldPos, float scale, float3 blendAxes, int texInd){
     return xProjection + yProjection + zProjection;
 }
 
-
-float3 frag (v2f IN) : SV_Target
+float3 frag(v2f IN) : SV_Target
 {
     float3 blendAxes = abs(IN.normalWS);
     blendAxes /= blendAxes.x + blendAxes.y + blendAxes.z;
 
     int material = IN.material;
-
     float3 baseColor = _MatTerrainData[material].baseColor.xyz;
-
     float3 textureColor = triplanar(IN.positionWS, _MatTerrainData[material].baseTextureScale, blendAxes, material);
+    float colorStr = _MatTerrainData[material].baseColorStrength;
+    float3 albedo = baseColor * colorStr + textureColor * (1 - colorStr);
 
-    float colorStrength = _MatTerrainData[material].baseColorStrength;
+    Light light = GetMainLight(TransformWorldToShadowCoord(IN.positionWS));
+    float NdotL = saturate(dot(IN.normalWS, light.direction));
+    float stepped = floor(NdotL * light.shadowAttenuation * _ToonSteps) / _ToonSteps;
+    float lit = max(stepped, _Ambient);
 
-    InputData lightingInput = (InputData)0;
-	lightingInput.positionWS = IN.positionWS;
-	lightingInput.normalWS = normalize(IN.normalWS);
-    lightingInput.viewDirectionWS = GetWorldSpaceNormalizeViewDir(IN.positionWS);
-	lightingInput.shadowCoord = TransformWorldToShadowCoord(IN.positionWS);
-
-	SurfaceData surfaceInput = (SurfaceData)0;
-	surfaceInput.albedo = baseColor * colorStrength + textureColor * (1-colorStrength);
-
-	return max(UniversalFragmentPBR(lightingInput, surfaceInput).rgb, surfaceInput.albedo * unity_AmbientGround);
+    return albedo * lit * light.color + albedo * _Ambient * (1 - lit);
 }

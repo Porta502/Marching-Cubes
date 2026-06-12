@@ -68,34 +68,28 @@ public class TerraformController
     bool RayTestSolid(CPUDensityManager.MapData pointInfo){ return (pointInfo.density * (pointInfo.viscosity / 255.0f)) >= IsoLevel; }
     bool RayTestLiquid(CPUDensityManager.MapData pointInfo){ return (pointInfo.density * (1 - (pointInfo.viscosity / 255.0f))) >= IsoLevel || (pointInfo.density * (pointInfo.viscosity / 255.0f)) >= IsoLevel;}
 
-
-    private float rebuildTimer = 0f;
-    private float rebuildInterval = 0.05f; // rebuild 10 times per second max
-
     void Terraform()
     {
         if (cam == null) cam = Camera.main?.transform;
         if (cam == null) return;
 
         float3 camPosGC = CPUDensityManager.WSToGS(cam.position);
-        rebuildTimer -= Time.deltaTime;
 
         if (Input.GetMouseButtonUp(1) || Input.GetMouseButtonUp(0))
         {
             MainInventory.ClearSmallMaterials(settings.minInvMatThresh);
-            rebuildTimer = 0f; // force rebuild on release
         }
         else if (Input.GetMouseButton(1))
         {
             if (MainInventory.selected.isSolid)
             {
                 if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestSolid, out hitPoint))
-                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddSolid); rebuildTimer = rebuildInterval; }
+                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddSolid);
             }
             else
             {
                 if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestLiquid, out hitPoint))
-                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddLiquid); rebuildTimer = rebuildInterval; }
+                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleAddLiquid);
             }
         }
         else if (Input.GetMouseButton(0))
@@ -103,12 +97,12 @@ public class TerraformController
             if (shiftPressed)
             {
                 if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestLiquid, out hitPoint))
-                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveLiquid); rebuildTimer = rebuildInterval; }
+                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveLiquid);
             }
             else
             {
                 if (CPUDensityManager.RayCastTerrain(camPosGC, cam.forward, settings.maxTerraformDistance, RayTestSolid, out hitPoint))
-                    if (rebuildTimer <= 0f) { CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveSolid); rebuildTimer = rebuildInterval; }
+                    CPUDensityManager.Terraform(hitPoint, settings.terraformRadius, HandleRemoveSolid);
             }
         }
         else return;

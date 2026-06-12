@@ -18,4 +18,3 @@ MonoBehaviour:
   indirectTerrainMats:
   - {fileID: 0}
   - {fileID: 0}
-  memoryBuffer: {fileID: 11400000, guid: 743280fd1911d428e99f1d63657bfdaf, type: 2}
